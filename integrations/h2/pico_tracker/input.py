@@ -5,6 +5,7 @@ from pathlib import Path
 import time
 
 from .geometry import pose_valid
+from .hands import hands_status
 
 RUNTIME = Path('/dev/shm') / f'h2-pico-tracker-{os.getuid()}'
 FRAME_PATH = RUNTIME / 'latest.json'
@@ -50,7 +51,7 @@ class TrackerInput:
         return True, (f'{side.title()} wrist tracker selected; START captures the neutral arm pose' if serial else
                       f'{side.title()} wrist tracker assignment cleared')
 
-    def status(self, both=False, head_only=False):
+    def status(self, both=False, head_only=False, optical_hands=False):
         frame = read_frame(self.frame_path)
         config = self.config()
         serial = config.get('left_sn', '')
@@ -62,19 +63,22 @@ class TrackerInput:
         missing = [side for side in sides if config.get(side+'_sn') not in trackers]
         stale = [side for side in sides if ages.get(config.get(side+'_sn'), 1e9) >= 1000]
         duplicate = not head_only and both and serial and serial == right_serial
-        ready = bool(frame and not missing and not stale and head_ready and not duplicate)
+        fingers = hands_status(frame)
+        ready = bool(frame and not missing and not stale and head_ready and not duplicate and
+                     (not optical_hands or fingers['ready']))
         message = ('Tracker input disconnected' if not frame else
                    'Use a different tracker serial for each wrist' if duplicate else
                    f'Choose the {missing[0]} wrist tracker' if missing else
                    'Enable Head in XRoboToolkit' if not head_ready else
                    f'Move the {stale[0]} tracker to verify its pose is updating' if stale else
+                   fingers['message'] if optical_hands and not fingers['ready'] else
                    'Headset ready; START captures forward' if head_only else
                    ('Both wrist trackers ready; START captures neutral' if both else
                     'Left wrist tracker ready; START captures neutral'))
         return {'connected': bool(frame), 'ready': ready, 'left_sn': serial,
                 'right_sn': right_serial, 'required_sides': list(sides),
                 'serial_numbers': list(trackers), 'trackers': trackers,
-                'pose_age_ms': ages, 'head_ready': head_ready, 'message': message,
+                'pose_age_ms': ages, 'head_ready': head_ready, 'hands': fingers, 'message': message,
                 'timestamp_source': frame.get('timestamp_source') if frame else None,
                 'transport_delay_ms': round(frame.get('transport_delay_ms', 0), 1) if frame else None,
                 'sample_hz': frame.get('sample_hz', 0) if frame else 0}

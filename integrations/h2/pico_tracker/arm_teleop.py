@@ -4,7 +4,8 @@
 LAUNCH initializes arms exactly through the existing H2 controller. START
 captures a neutral tracker pose and the measured robot wrist transform.
 --both-arms enables separate left/right wrist trackers. In left-only mode the
-right arm holds its START values. Finger publishing belongs to the dashboard.
+right arm holds its START values. --pico-hands uses optical finger input through
+the unchanged Unitree Dex5 controller; other modes use dashboard-owned fingers.
 """
 import argparse
 import json
@@ -20,12 +21,14 @@ sys.path.insert(0, str(ROOT))
 from quest_h2_teleop import UPSTREAM, environment
 from pico_tracker.geometry import IncrementalWrist, heading_basis, pose_valid
 from pico_tracker.input import read_frame, TrackerInput
+from pico_tracker.hands import OpticalFingers, hands_status
 from head_camera.head_follow import HeadPoseMapper, HeadCommandPublisher, settings as head_settings
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--both-arms', action='store_true')
+    parser.add_argument('--pico-hands', action='store_true')
     args = parser.parse_args()
     # Importing this module for tests never initializes DDS or a motor controller.
     sys.path[:0] = environment()['PYTHONPATH'].split(os.pathsep)
@@ -41,13 +44,14 @@ def main():
     config = inputs.config()
     sides = ('left', 'right') if args.both_arms else ('left',)
     serials = {side: config.get(side+'_sn') for side in sides}
-    if not inputs.status(both=args.both_arms)['ready']:
-        raise RuntimeError(inputs.status(both=args.both_arms)['message'])
+    readiness = inputs.status(both=args.both_arms, optical_hands=args.pico_hands)
+    if not readiness['ready']:
+        raise RuntimeError(readiness['message'])
     state = {'START': False, 'STOP': False, 'READY': False, 'RECORD_RUNNING': False,
              'INPUT': 'pico_tracker', 'LEFT_SN': serials['left'],
              'RIGHT_SN': serials.get('right'), 'TRACKER_LIVE': False}
     lock = threading.RLock()
-    controller = ipc = None
+    controller = ipc = fingers = None
     mappers = {}
     session = None
     right_q = None
@@ -75,6 +79,8 @@ def main():
         with lock:
             if key == 'q':
                 state.update(START=False, STOP=True, READY=False)
+                if fingers is not None:
+                    fingers.stop()
             elif key == 'h':
                 if not state['START'] or not head_enabled:
                     raise ValueError('Start teleop with head following enabled first')
@@ -88,6 +94,8 @@ def main():
                                     for sn in serials.values()):
                     raise ValueError('Move each selected wrist tracker to verify live input')
                 basis = heading_basis(frame.get('head_pose'))
+                if args.pico_hands and not hands_status(frame)['ready']:
+                    raise ValueError(hands_status(frame)['message'])
                 q = controller.get_current_dual_arm_q()
                 poses = dict(zip(('left', 'right'), fk(q)))
                 mappers = {side: IncrementalWrist(frame['trackers'][sn], poses[side].tolist(), basis,
@@ -96,6 +104,8 @@ def main():
                 session, right_q = frame['session'], q[7:].copy()
                 if head_enabled:
                     recenter_head(frame)
+                if fingers is not None:
+                    fingers.start(frame)
                 state.update(START=True, TRACKER_LIVE=True, INPUT_MESSAGE='Following wrist trackers')
                 controller.speed_gradual_max()
                 print(json.dumps({'neutral_captured': True, 'serials': serials,
@@ -116,6 +126,8 @@ def main():
         ik = H2_ArmIK()
         ChannelFactoryInitialize(0, os.environ.get('H2_DDS_INTERFACE', 'eth0'))
         controller = H2_ArmController(motion_mode=True)
+        if args.pico_hands:
+            fingers = OpticalFingers()
         if head_enabled:
             head_publisher = HeadCommandPublisher(controller.lowcmd_publisher,
                                                   controller.crc,
@@ -134,6 +146,10 @@ def main():
                 active = state['START']
             if active:
                 frame = read_frame()
+                if fingers is not None:
+                    finger_status = fingers.update(frame)
+                    with lock:
+                        state['PICO_FINGERS'] = finger_status
                 if head_enabled:
                     head_live = bool(frame and frame['session'] == session and
                                      pose_valid(frame.get('head_pose')))
@@ -172,6 +188,8 @@ def main():
             time.sleep(max(0., .01-(time.monotonic()-tick)))
     finally:
         state.update(START=False, STOP=True, READY=False)
+        if fingers is not None:
+            fingers.close()
         if controller is not None:
             controller.ctrl_dual_arm_go_home()
         if ipc is not None:

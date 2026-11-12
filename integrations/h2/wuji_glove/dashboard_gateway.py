@@ -200,10 +200,10 @@ def handler(bridge, tracker=None, video=None):
                     status['head_video'] = video.status() if video else None
                     data = json.dumps(status).encode()
                 if self.command == 'POST' and self.path == '/api/hand-source' and response.status == 200:
-                    if json.loads(body)['source'] in ('vr', 'pico_head'): bridge.close()
+                    if json.loads(body)['source'] in ('vr', 'pico_head', 'pico_tracker_hands'): bridge.close()
                     if callable(getattr(bridge, 'set_dual', None)):
                         bridge.set_dual(json.loads(body)['source'] == 'pico_dual_wuji')
-                    if tracker and json.loads(body)['source'] not in ('pico_wuji', 'pico_dual_wuji', 'pico_head'): tracker.close()
+                    if tracker and json.loads(body)['source'] not in ('pico_wuji', 'pico_dual_wuji', 'pico_head', 'pico_tracker_hands'): tracker.close()
                 if 300 <= response.status < 400:
                     self.send_response(response.status)
                     self.send_header('Location', response.getheader('Location', '/h2-teleop'))

@@ -14,6 +14,7 @@ import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from pico_tracker.geometry import pose_valid
+from pico_tracker.hands import read_hands
 
 
 def main():
@@ -51,6 +52,7 @@ def main():
                              'sample_mono': tick,
                              'sample_hz': round(1/max(tick-last_emit, 1e-6), 1),
                              'pose_age_ms': {sn: round((tick-changed[sn])*1000, 1) for sn in trackers}}
+                    frame['hands'] = read_hands(xrt)
                     data = (json.dumps(frame, separators=(',', ':'), allow_nan=False)+'\n').encode()
                     if len(data) <= 4096:
                         try:

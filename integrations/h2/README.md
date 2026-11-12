@@ -73,6 +73,8 @@ See [the operator flow](OPERATOR_FLOW.md) before launching motion.
 - Browser arms with Wuji left fingers.
 - Native PICO left wrist tracker with a Wuji left glove.
 - Native PICO both wrist trackers with both Wuji gloves.
+- Native PICO both wrist trackers with PICO optical finger tracking, without
+  Wuji gloves (prepared offline; deployment and physical validation pending).
 - Native PICO head-only following, holding the measured arm posture and
   leaving fingers idle.
 - Right-finger-only testing and standalone right-hand grasp/hold.
@@ -106,6 +108,10 @@ Wrist/joint recording remains available for arm sessions.
 ## Validation and remaining work
 
 Separate arm/glove operation and a supported head-only test were exercised.
+The new **PICO wrist trackers + PICO fingers** choice uses the official SDK hand
+skeleton and pinned Unitree Dex5 controller. Its OpenXR conversion, independent
+hand loss, START/STOP ownership and actual retargeting were checked offline.
+See [deployment and operator steps](deployment/PICO_OPTICAL_HANDS.md).
 The combined wrist/glove/head-camera attempt remained stopped because PICO
 tracking/video connections were intermittent. The newest video recovery
 change passed encode/decode and simulated source/socket interruption tests;

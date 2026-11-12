@@ -39,6 +39,20 @@ XRoboToolkit head following and its camera view are separate from this mode.
 4. Browser poses drive both arms; the Wuji glove drives left fingers. Right
    fingers retain their last pose. **Stop following** ends the session.
 
+## Native PICO wrist trackers and optical fingers
+
+1. Power both wrist trackers. In XRoboToolkit enable **Head**, **Hand**,
+   **Object Tracking** and **Send**, using `LAPTOP_IP` for PC Service.
+2. Select **PICO wrist trackers + PICO fingers** on the dashboard.
+3. Press **Connect PICO tracker input**. Verify left/right tracker assignments
+   and that both hands are optically tracked. Wuji gloves are not required.
+4. In supported robot mode 4 or 703, press **Prepare arms**. The hands open
+   during preparation. Match the robot arm pose, look forward, then Start.
+5. Trackers drive arms and wrists; PICO optical hand tracking drives fingers.
+   Stop ends both and returns the arms home. Walking stays under the remote.
+
+This mode is staged offline; see [deployment](deployment/PICO_OPTICAL_HANDS.md).
+
 ## Native PICO left wrist and Wuji left hand
 
 1. Power the left wrist tracker and calibrated left glove.
