@@ -1,0 +1,20 @@
+[Unit]
+Description=Official Unitree TeleImager H2 head camera
+Requires=nvargus-daemon.service
+After=nvargus-daemon.service network.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+User=unitree
+WorkingDirectory=/home/unitree/h2-camera-check
+Environment="PYTHONPATH=/home/unitree/h2-camera-check/src"
+Environment="PYTHONUNBUFFERED=1"
+Environment="NO_COLOR=1"
+ExecStart=/home/unitree/h2-camera-check/.venv/bin/python -m teleimager.server --config /home/unitree/h2-camera-check/teleimager_server.yaml --no-affinity
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

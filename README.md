@@ -1,3 +1,5 @@
+> H2 operators: see [PICO/Wuji dashboard, head camera and setup](integrations/h2/README.md).
+
 <div align="center">
   <h1 align="center">xr_teleoperate</h1>
   <a href="https://www.unitree.com/" target="_blank">

@@ -7,3 +7,9 @@
 [submodule "teleop/teleimager"]
 	path = teleop/teleimager
 	url = https://github.com/unitreerobotics/teleimager.git
+[submodule "h2-runtime"]
+	path = integrations/h2/upstream/dex5-pr321
+	url = https://github.com/unitreerobotics/xr_teleoperate.git
+[submodule "h2-head-camera-streamer"]
+	path = integrations/h2/upstream/teleimager-head-camera
+	url = https://github.com/unitreerobotics/teleimager.git

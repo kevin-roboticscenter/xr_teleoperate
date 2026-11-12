@@ -1,0 +1,13 @@
+{
+  "retargeting": {
+    "scaling_factor": 0.9,
+    "low_pass_alpha": 0.8,
+    "project_dist": 0.015,
+    "escape_dist": 0.02
+  },
+  "provenance": {
+    "basis": "Official PR321 Dex5 right-hand URDF and retargeter; same latency and pinch thresholds as left glove profile",
+    "physically_validated": false,
+    "distal_linkage_fit": false
+  }
+}

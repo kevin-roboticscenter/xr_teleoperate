@@ -1,0 +1,12 @@
+{
+  "repository": "https://github.com/unitreerobotics/teleimager",
+  "commit": "d90ab16d918324f94cf3fa70f2b8c54059012cc0",
+  "version": "2.0.8",
+  "files": {
+    "src/teleimager/server.py": "d91d57ba78243ee3c417ce551be49a0b7fd2ba6eede11e93e8631e35f33f6ee5",
+    "src/teleimager/client.py": "6cdb6a0d029b87ef2bf6f0ae4440f5ba787efbed99eaa3cd9d2cff49dd382a9a",
+    "src/teleimager/__init__.py": "a156e5e882cfe5dc8166d9b6894cccfd04d4852cb70b7db96868034e117b3ffe"
+  },
+  "capture_implementation": "Unchanged official Unitree TeleImager GStreamer backend",
+  "config": "head_camera/teleimager_server.yaml"
+}

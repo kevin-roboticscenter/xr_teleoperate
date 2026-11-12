@@ -1,0 +1,9 @@
+# Additional hand dependencies; keep the existing official Python 3.10,
+# Pinocchio 3.1.0 / NumPy 1.26.4 environment. CPU torch 2.3.0+cpu also satisfies
+# torch==2.3.0. The pinned dex-retargeting source is bundled, not fetched by pip.
+torch==2.3.0
+nlopt==2.7.1
+pytransform3d==3.17.0
+trimesh==4.12.2
+anytree==2.13.0
+lxml==6.1.3

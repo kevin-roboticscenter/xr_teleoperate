@@ -1,0 +1,51 @@
+{
+  "retargeting": {
+    "urdf_path": "../models/Dex5-left-linked.urdf",
+    "target_joint_names": [
+      "Roll_21L",
+      "Pitch_22L",
+      "Pitch_23L",
+      "Roll_31L",
+      "Pitch_32L",
+      "Pitch_33L",
+      "Roll_41L",
+      "Pitch_42L",
+      "Pitch_43L",
+      "Roll_51L",
+      "Pitch_52L",
+      "Pitch_53L",
+      "Yaw_11L",
+      "Roll_12L",
+      "Pitch_13L",
+      "Pitch_14L"
+    ],
+    "scaling_factor": 0.9,
+    "low_pass_alpha": 0.8,
+    "project_dist": 0.015,
+    "escape_dist": 0.02
+  },
+  "provenance": {
+    "basis": "Approximate linear distal linkage fit to healthy H2 feedback",
+    "healthy_feedback_rows": 44234,
+    "couplings": {
+      "Pitch_24L": {
+        "driver": "Pitch_23L",
+        "multiplier": 0.67654
+      },
+      "Pitch_34L": {
+        "driver": "Pitch_33L",
+        "multiplier": 0.68877
+      },
+      "Pitch_44L": {
+        "driver": "Pitch_43L",
+        "multiplier": 0.66791
+      },
+      "Pitch_54L": {
+        "driver": "Pitch_53L",
+        "multiplier": 0.7089
+      }
+    },
+    "pinch_threshold_basis": "Captured pinch gap 9.7-14.1 mm; claw gap 16.4-24.4 mm",
+    "physically_validated": false
+  }
+}

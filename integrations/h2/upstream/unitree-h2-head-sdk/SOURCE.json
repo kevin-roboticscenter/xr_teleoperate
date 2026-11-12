@@ -1,0 +1,7 @@
+{
+  "repository": "https://github.com/unitreerobotics/unitree_sdk2_python",
+  "commit": "814556d15970dd2ecf1c9984e845ca02ab07e206",
+  "file": "example/h2/high_level/h2_arm_sdk_dds_example.py",
+  "sha256": "f07cfac372c49f05e9eb096642487e96e5eba1a6ac0996535c1d2ec6a0c646b8",
+  "modified": false
+}

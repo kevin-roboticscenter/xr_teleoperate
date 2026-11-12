@@ -1,0 +1,44 @@
+diff --git a/src/televuer/televuer.py b/src/televuer/televuer.py
+index 1250131..db9f918 100644
+--- a/src/televuer/televuer.py
++++ b/src/televuer/televuer.py
+@@ -99,6 +99,9 @@ class TeleVuer:
+         self.zmq = zmq
+         self.webrtc = webrtc
+         self.webrtc_url = webrtc_url
++        # A compact, head-relative camera panel below/right of the main sightline.
++        self.ego_panel_height = 0.35
++        self.ego_panel_position = [0.65, -0.55, 0]
+ 
+         if self.display_mode == "immersive":
+             if self.webrtc:
+@@ -513,7 +516,8 @@ class TeleVuer:
+                     ImageBackground(
+                         self.img2display[:, :self.img_width],
+                         aspect=self.aspect_ratio,
+-                        height=0.75,
++                        height=self.ego_panel_height,
++                        position=self.ego_panel_position,
+                         distanceToCamera=2,
+                         # The underlying rendering engine supported a layer binary bitmask for both objects and the camera. 
+                         # Below we set the two image planes, left and right, to layers=1 and layers=2. 
+@@ -527,7 +531,8 @@ class TeleVuer:
+                     ImageBackground(
+                         self.img2display[:, self.img_width:],
+                         aspect=self.aspect_ratio,
+-                        height=0.75,
++                        height=self.ego_panel_height,
++                        position=self.ego_panel_position,
+                         distanceToCamera=2,
+                         layers=2,
+                         format="jpeg",
+@@ -569,7 +574,8 @@ class TeleVuer:
+                     ImageBackground(
+                         self.img2display,
+                         aspect=self.aspect_ratio,
+-                        height=0.75,
++                        height=self.ego_panel_height,
++                        position=self.ego_panel_position,
+                         distanceToCamera=2,
+                         format="jpeg",
+                         quality=80,

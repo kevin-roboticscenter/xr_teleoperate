@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+.runtime*/
+.venv*/
+.tools/
+.env*
+certs/
+**/evidence/
+*.log
+*.sock
+*.lock
+config/*.json
+!config/*.example.json
+wuji_glove/models/
+deployment/backups/
+*.tar.gz
+*.zip

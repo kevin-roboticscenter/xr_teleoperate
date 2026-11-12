@@ -1,0 +1,14 @@
+[Unit]
+Description=Load supplied Unitree H2 GMSL camera drivers
+Requires=unitree-camera-init.service
+After=unitree-camera-init.service
+Before=nvargus-daemon.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/unitree/.Unitree/YUSHU_4A_AGTH_G2Y_7.1
+ExecStart=/bin/bash ./load_modules.sh
+ExecStartPost=/usr/bin/test -c /dev/video0
+ExecStartPost=/usr/bin/test -c /dev/video1
+RemainAfterExit=yes
+TimeoutStartSec=120

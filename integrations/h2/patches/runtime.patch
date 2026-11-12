@@ -1,0 +1,138 @@
+diff --git a/teleop/robot_control/robot_hand_unitree.py b/teleop/robot_control/robot_hand_unitree.py
+index 27f7a8d..b744302 100644
+--- a/teleop/robot_control/robot_hand_unitree.py
++++ b/teleop/robot_control/robot_hand_unitree.py
+@@ -19,6 +19,7 @@ parent2_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__
+ sys.path.append(parent2_dir)
+ from teleop.robot_control.hand_retargeting import HandRetargeting, HandType
+ from teleop.utils.weighted_moving_filter import WeightedMovingFilter
++from teleop.utils.dex5_gains import GainProfile
+ 
+ import logging_mp
+ logger_mp = logging_mp.getLogger(__name__)
+@@ -28,10 +29,12 @@ logger_mp = logging_mp.getLogger(__name__)
+ # transform, so commands and states are indexed by joint, not by motor.
+ Dex5_Num_Joints = 20
+ Dex5_Thumb_Base_Index = 16
+-# Recommended gains from the Dex5-1 DDS doc. The thumb motors report in N*m and the four
+-# fingers in mNm, hence the different scale.
+-Dex5_Finger_Kp, Dex5_Finger_Kd = 0.10, 0.001
+-Dex5_Thumb_Kp, Dex5_Thumb_Kd = 1.0, 0.02
++# Snapshot launch-time settings before the controller's worker process starts.
++# Defaults: Kp +20%, Kd +10%; see DEX5_TUNING.md in the project root.
++# These gains set position stiffness/damping, not a measured grasp-force limit.
++Dex5_Gains = GainProfile.from_environment()
++Dex5_Finger_Kp, Dex5_Finger_Kd = Dex5_Gains.finger_kp, Dex5_Gains.finger_kd
++Dex5_Thumb_Kp, Dex5_Thumb_Kd = Dex5_Gains.thumb_kp, Dex5_Gains.thumb_kd
+ kTopicDex5LeftCommand = "rt/dex5/left/cmd"
+ kTopicDex5RightCommand = "rt/dex5/right/cmd"
+ kTopicDex5LeftState = "rt/dex5/left/state"
+@@ -60,6 +63,7 @@ class Dex5_1_Controller:
+         simulation_mode: Whether to use simulation mode (default is False, which means using real robot)
+         """
+         logger_mp.info("Initialize Dex5_1_Controller...")
++        logger_mp.info(f"Dex5 launch gains: {Dex5_Gains.describe()}")
+ 
+         self.fps = fps
+         self.Unit_Test = Unit_Test
+diff --git a/teleop/utils/dex5_gains.py b/teleop/utils/dex5_gains.py
+new file mode 100644
+index 0000000..c783509
+--- /dev/null
++++ b/teleop/utils/dex5_gains.py
+@@ -0,0 +1,95 @@
++"""Persist launch-time Dex5 stiffness settings without contacting a robot."""
++from dataclasses import dataclass
++import json
++import math
++import os
++from pathlib import Path
++import tempfile
++
++
++MIN_MULTIPLIER = 0.5
++MAX_MULTIPLIER = 2.5
++
++
++@dataclass(frozen=True)
++class GainProfile:
++    finger_multiplier: float = 1.2
++    thumb_multiplier: float = 1.2
++
++    def __post_init__(self):
++        for name in ('finger_multiplier', 'thumb_multiplier'):
++            value = getattr(self, name)
++            if (isinstance(value, bool) or not isinstance(value, (int, float))
++                    or not math.isfinite(value)
++                    or not MIN_MULTIPLIER <= value <= MAX_MULTIPLIER):
++                raise ValueError(f'{name} must be a number from {MIN_MULTIPLIER} to {MAX_MULTIPLIER}')
++
++    @classmethod
++    def from_dict(cls, values):
++        if not isinstance(values, dict) or set(values) != {'finger_multiplier', 'thumb_multiplier'}:
++            raise ValueError('Provide finger_multiplier and thumb_multiplier')
++        return cls(**values)
++
++    @classmethod
++    def from_environment(cls, env=None):
++        env = os.environ if env is None else env
++        return cls(float(env.get('DEX5_FINGER_MULTIPLIER', '1.2')),
++                   float(env.get('DEX5_THUMB_MULTIPLIER', '1.2')))
++
++    @property
++    def finger_kp(self):
++        return 0.10 * self.finger_multiplier
++
++    @property
++    def finger_kd(self):
++        return 0.001 * (1.0 + 0.5 * (self.finger_multiplier - 1.0))
++
++    @property
++    def thumb_kp(self):
++        return 1.0 * self.thumb_multiplier
++
++    @property
++    def thumb_kd(self):
++        return 0.02 * (1.0 + 0.5 * (self.thumb_multiplier - 1.0))
++
++    def settings(self):
++        return {'finger_multiplier': self.finger_multiplier, 'thumb_multiplier': self.thumb_multiplier}
++
++    def describe(self):
++        return dict(self.settings(), finger_kp=self.finger_kp, finger_kd=self.finger_kd,
++                    thumb_kp=self.thumb_kp, thumb_kd=self.thumb_kd)
++
++    def environment(self):
++        return {'DEX5_FINGER_MULTIPLIER': str(self.finger_multiplier),
++                'DEX5_THUMB_MULTIPLIER': str(self.thumb_multiplier)}
++
++
++class GainStore:
++    def __init__(self, path):
++        self.path = Path(path)
++
++    def load(self):
++        try:
++            values = json.loads(self.path.read_text())
++        except FileNotFoundError:
++            return GainProfile()
++        except json.JSONDecodeError as exc:
++            raise ValueError(f'Invalid hand stiffness settings: {exc}') from exc
++        return GainProfile.from_dict(values)
++
++    def save(self, profile):
++        if not isinstance(profile, GainProfile):
++            raise TypeError('Expected a GainProfile')
++        self.path.parent.mkdir(parents=True, exist_ok=True)
++        temporary = None
++        try:
++            with tempfile.NamedTemporaryFile('w', dir=self.path.parent, delete=False) as target:
++                temporary = target.name
++                json.dump(profile.settings(), target, indent=2)
++                target.write('\n')
++                target.flush()
++                os.fsync(target.fileno())
++            os.replace(temporary, self.path)
++        finally:
++            if temporary and os.path.exists(temporary):
++                os.unlink(temporary)

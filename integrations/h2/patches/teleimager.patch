@@ -1,0 +1,292 @@
+diff --git a/cam_config_server.yaml b/cam_config_server.yaml
+index 15c0376..827850c 100644
+--- a/cam_config_server.yaml
++++ b/cam_config_server.yaml
+@@ -1,94 +1,70 @@
+-# =====================================================
+-# Global WebRTC encoder config (applies to ALL cameras).
+-# aiortc bitrate caps are module-level, so this is shared by every track.
+-# Tune by network: WiFi6 5GHz dedicated -> max ~12M; WiFi5 shared -> max ~8M; public -> max ~4M.
+-# =====================================================
+-webrtc:
+-  bitrate:
+-    min: 2000000      # floor under congestion
+-    default: 5000000  # startup rate, skips slow-start
+-    max: 12000000     # quality ceiling on healthy network
+-  gop_length: 60      # frames between keyframes; lower = faster recovery from packet loss
+-
+-# =====================================================
+-# Head camera configuration
+-# =====================================================
+-# camera topic
+-head_camera:
+-  # camera config
+-
+-  # if enable_zmq and enable_webrtc are both false, the camera will not start
+-  # Set to true to enable ZMQ publishing, false to disable
+-  enable_zmq: true
+-  # Port to publish camera stream, e.g. zmq tcp://*:55555.  image_client.py should connect to the same port
+-  zmq_port : 55555
+-  # Set to true to enable WebRTC publishing, false to disable
+-  enable_webrtc: true
+-  # Port for WebRTC signaling server
+-  webrtc_port : 60001
+-  # webrtc codec preference, options: "vp8", "h264"
+-  webrtc_codec: h264
+-
+-  # Type of camera:
+-  #   - "opencv"    → opencv driver
+-  #   - "realsense" → pyrealsense2 driver
+-  #   - "uvc"       → pyuvc driver
+-  type: uvc
+-
+-  # Image Format
+-  # image resolution: [height, width]
+-  image_shape: [480, 1280]
+-  binocular: true
+-  # frame per second
+-  fps: 30
+-
+-  # Camera identifiers (choose one or more):
+-  #   - video_id: X        → /dev/videoX  (e.g. 0 → /dev/video0)
+-  #   - serial_number: Y   → camera's hardware serial (e.g. 141722079879)
+-  #   - physical_path: Z   → sysfs physical USB path (e.g. /sys/devices/pci0000:00/.../1-11.2:1.0)
+-  #
+-  # Identifier priority:
+-  #   physical_path > serial_number > video_id
+-  #   if an identifier is not used, set it to null. The system will resolve the camera by priority.
+-  #
+-  # Notes:
+-  #   - type "realsense": supports serial_number only (but a RealSense can also be used as opencv/uvc if desired)
+-  #   - type "opencv":    supports video_id, serial_number, physical_path
+-  #   - type "uvc":       supports video_id, serial_number, physical_path
+-  video_id: 0
+-  serial_number: 01.00.00
+-  physical_path: null
+-
+-# =====================================================
+-# Left wrist camera configuration
+-# =====================================================
+-left_wrist_camera:
+-  enable_zmq: true
+-  zmq_port : 55556
+-  enable_webrtc: true
+-  webrtc_port : 60002
+-  webrtc_codec: h264
+-  type: uvc
+-  image_shape: [480, 640]
+-  binocular: false
+-  fps: 30
+-  video_id: 2
+-  serial_number: 200901010001
+-  physical_path: null
+-
+-# =====================================================
+-# Right wrist camera configuration
+-# =====================================================
+-right_wrist_camera:
+-  enable_zmq: true
+-  zmq_port : 55557
+-  enable_webrtc: true
+-  webrtc_port: 60003
+-  webrtc_codec: h264
+-  type: uvc
+-  image_shape: [480, 640]
+-  binocular: false
+-  fps: 30
+-  video_id: 4
+-  serial_number: 200901010002
+-  physical_path: null
+\ No newline at end of file
++{
++  "webrtc": {
++    "bitrate": {
++      "min": 2000000,
++      "default": 4000000,
++      "max": 6000000
++    },
++    "gop_length": 60
++  },
++  "head_camera": {
++    "enable_zmq": true,
++    "zmq_port": 55555,
++    "enable_webrtc": false,
++    "webrtc_port": 60001,
++    "type": "mosaic",
++    "image_shape": [
++      720,
++      1280
++    ],
++    "binocular": false,
++    "fps": 30,
++    "sources": [
++      {
++        "topic": "left_wrist_camera",
++        "label": "Hand camera A"
++      },
++      {
++        "topic": "right_wrist_camera",
++        "label": "Hand camera B"
++      }
++    ],
++    "head_camera_connected": false
++  },
++  "left_wrist_camera": {
++    "enable_zmq": true,
++    "zmq_port": 55556,
++    "enable_webrtc": false,
++    "type": "opencv",
++    "image_shape": [
++      640,
++      480
++    ],
++    "capture_shape": [
++      480,
++      640
++    ],
++    "rotation_degrees": 90,
++    "binocular": false,
++    "fps": 30,
++    "video_path": "/dev/v4l/by-path/pci-0000:00:14.0-usb-0:1:1.0-video-index0"
++  },
++  "right_wrist_camera": {
++    "enable_zmq": true,
++    "zmq_port": 55557,
++    "enable_webrtc": false,
++    "type": "opencv",
++    "image_shape": [
++      640,
++      480
++    ],
++    "capture_shape": [
++      480,
++      640
++    ],
++    "rotation_degrees": 90,
++    "binocular": false,
++    "fps": 30,
++    "video_path": "/dev/v4l/by-path/pci-0000:00:14.0-usb-0:6:1.0-video-index0"
++  }
++}
+diff --git a/src/teleimager/image_server.py b/src/teleimager/image_server.py
+index 5f9a10a..fa58473 100644
+--- a/src/teleimager/image_server.py
++++ b/src/teleimager/image_server.py
+@@ -910,6 +910,8 @@ class BaseCamera:
+         self._cam_topic = cam_topic
+         self._img_shape = img_shape # (H, W)
+         self._fps = fps
++        self.latest_bgr = None
++        self.last_frame_time = 0.0
+         self._enable_zmq = enable_zmq
+         self._zmq_port = zmq_port
+         if self._enable_zmq:
+@@ -1143,14 +1145,18 @@ class UVCCamera(BaseCamera):
+ 
+ class OpenCVCamera(BaseCamera):
+     def __init__(self, cam_topic, video_path, img_shape, fps, 
+-                 enable_zmq=True, zmq_port=55555, enable_webrtc=False, webrtc_port=66666, webrtc_codec=None):
++                 enable_zmq=True, zmq_port=55555, enable_webrtc=False, webrtc_port=66666, webrtc_codec=None,
++                 capture_shape=None, rotation_degrees=0):
+         super().__init__(cam_topic, img_shape, fps, enable_zmq, zmq_port, enable_webrtc, webrtc_port, webrtc_codec)
+         self._video_path = video_path
++        self._rotation = {0: None, 90: cv2.ROTATE_90_CLOCKWISE, 180: cv2.ROTATE_180,
++                          270: cv2.ROTATE_90_COUNTERCLOCKWISE}[rotation_degrees]
++        capture_shape = capture_shape or img_shape
+ 
+         self.cap = cv2.VideoCapture(self._video_path, cv2.CAP_V4L2)
+         self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self._img_shape[0])
+-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH,  self._img_shape[1])
++        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, capture_shape[0])
++        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, capture_shape[1])
+         self.cap.set(cv2.CAP_PROP_FPS, self._fps)
+         if not self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1):
+             logger_mp.info(f"[OpenCVCamera: {cam_topic}] CAP_PROP_BUFFERSIZE=1 not supported by backend, kernel buffer left at default")
+@@ -1178,6 +1184,10 @@ class OpenCVCamera(BaseCamera):
+         if self.cap is not None:
+             ret, bgr_numpy = self.cap.read()
+             if ret:
++                if self._rotation is not None:
++                    bgr_numpy = cv2.rotate(bgr_numpy, self._rotation)
++                self.latest_bgr = bgr_numpy
++                self.last_frame_time = time.monotonic()
+                 if self._enable_webrtc:
+                     self._webrtc_buffer.write(bgr_numpy)
+ 
+@@ -1196,6 +1206,42 @@ class OpenCVCamera(BaseCamera):
+         self.cap = None
+         logger_mp.info(f"[OpenCVCamera] Released {self._cam_topic}")
+ 
++class CameraMosaic(BaseCamera):
++    """Compose the two wrist streams for the existing XR head-image transport."""
++    def __init__(self, topic, shape, fps, cameras, sources, port):
++        super().__init__(topic, shape, fps, enable_zmq=True, zmq_port=port)
++        self.cameras, self.sources = cameras, sources
++
++    def _update_frame(self):
++        height, width = self._img_shape
++        image = np.full((height, width, 3), 22, dtype=np.uint8)
++        cv2.putText(image, 'Hand cameras | head camera not connected', (16, 28),
++                    cv2.FONT_HERSHEY_SIMPLEX, .65, (230, 230, 230), 1)
++        tile_width = width // len(self.sources)
++        for index, source in enumerate(self.sources):
++            x = index * tile_width
++            cv2.putText(image, source['label'], (x + 16, 58),
++                        cv2.FONT_HERSHEY_SIMPLEX, .6, (230, 230, 230), 1)
++            camera = self.cameras.get(source['topic'])
++            frame = camera.latest_bgr if camera and time.monotonic() - camera.last_frame_time < 2 else None
++            if frame is None:
++                cv2.putText(image, 'Waiting for frames', (x + 16, 100),
++                            cv2.FONT_HERSHEY_SIMPLEX, .6, (70, 170, 240), 1)
++                continue
++            scale = min((tile_width - 24) / frame.shape[1], (height - 82) / frame.shape[0])
++            resized = cv2.resize(frame, (round(frame.shape[1] * scale), round(frame.shape[0] * scale)))
++            ox, oy = x + (tile_width - resized.shape[1]) // 2, 72 + (height - 82 - resized.shape[0]) // 2
++            image[oy:oy + resized.shape[0], ox:ox + resized.shape[1]] = resized
++        self.latest_bgr, self.last_frame_time = image, time.monotonic()
++        ok, encoded = cv2.imencode('.jpg', image, [cv2.IMWRITE_JPEG_QUALITY, 85])
++        if ok:
++            self._zmq_buffer.write(encoded.tobytes())
++            self._ready.set()
++
++    def release(self):
++        pass
++
++
+ class IsaacSimCamera(BaseCamera):
+     def __init__(self, cam_topic, img_shape, fps,
+                  enable_zmq=True, zmq_port=55555, enable_webrtc=False, webrtc_port=66666, webrtc_codec=None,
+@@ -1290,7 +1336,12 @@ class ImageServer:
+         self._stop_event = threading.Event()
+         self._cameras: dict[str, BaseCamera] = {}
+         if not self._isaacsim_enable:
+-            self._cam_finder = CameraFinder(realsense_enable, camera_finder_verbose)
++            # Explicit OpenCV device paths need no USB scan or kernel-driver reload.
++            needs_finder = any((cfg.get("enable_zmq") or cfg.get("enable_webrtc")) and
++                               not (cfg.get("type") == "mosaic" or
++                                    (cfg.get("type") == "opencv" and cfg.get("video_path")))
++                               for cfg in cam_config.values())
++            self._cam_finder = CameraFinder(realsense_enable, camera_finder_verbose) if needs_finder else None
+         self._responser = ZMQ_Responser(self._cam_config)
+         self._zmq_publisher_manager = ZMQ_PublisherManager.get_instance()
+         self._webrtc_publisher_manager = WebRTC_PublisherManager.get_instance()
+@@ -1317,7 +1368,18 @@ class ImageServer:
+                 physical_path = str(cam_cfg.get("physical_path")) if cam_cfg.get("physical_path") else None
+                 serial_number = str(cam_cfg.get("serial_number")) if cam_cfg.get("serial_number") else None
+ 
++                if cam_type == 'mosaic':
++                    self._cameras[cam_topic] = CameraMosaic(cam_topic, img_shape, fps,
++                                                          self._cameras, cam_cfg['sources'], zmq_port)
++                    continue
+                 if cam_type == "opencv":
++                    if cam_cfg.get("video_path"):
++                        self._cameras[cam_topic] = OpenCVCamera(
++                            cam_topic, cam_cfg['video_path'], img_shape, fps,
++                            enable_zmq, zmq_port, enable_webrtc, webrtc_port, webrtc_codec,
++                            capture_shape=cam_cfg.get('capture_shape'),
++                            rotation_degrees=cam_cfg.get('rotation_degrees', 0))
++                        continue
+                     if physical_path is not None:
+                         vpath = self._cam_finder.get_vpath_by_ppath(physical_path)
+                         if vpath is None:

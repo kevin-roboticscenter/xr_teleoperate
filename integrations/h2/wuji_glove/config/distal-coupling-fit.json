@@ -1,0 +1,17 @@
+{
+  "healthy_feedback_rows": 44234,
+  "fits": [
+    {
+      "distal_ratio_zero_intercept": 0.67654
+    },
+    {
+      "distal_ratio_zero_intercept": 0.68877
+    },
+    {
+      "distal_ratio_zero_intercept": 0.66791
+    },
+    {
+      "distal_ratio_zero_intercept": 0.7089
+    }
+  ]
+}

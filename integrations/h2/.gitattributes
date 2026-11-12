@@ -1,0 +1,2 @@
+# Preserve whitespace in the upstream context carried by patch payloads.
+patches/*.patch -whitespace

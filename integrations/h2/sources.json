@@ -1,0 +1,42 @@
+{
+  "format": 1,
+  "runtime_commit": "39b79bca34b7547b21edad3fe3e642bb5cac7147",
+  "patches": [
+    {
+      "repository": "upstream/dex5-pr321",
+      "commit": "39b79bca34b7547b21edad3fe3e642bb5cac7147",
+      "patch": "patches/runtime.patch",
+      "sha256": "fee400dd3d2fafbb267d55609ea9b38f450291bcead2d3162c00ae26f94eebc4",
+      "files": [
+        "teleop/robot_control/robot_hand_unitree.py",
+        "teleop/utils/dex5_gains.py"
+      ]
+    },
+    {
+      "repository": "upstream/dex5-pr321/teleop/teleimager",
+      "commit": "57cf2a40572227273fa001cd17833b755331ec97",
+      "patch": "patches/teleimager.patch",
+      "sha256": "679a6244977c8d452578ffec33768f9fd84a89fb68f3311fa019968310302de4",
+      "files": [
+        "cam_config_server.yaml",
+        "src/teleimager/image_server.py"
+      ]
+    },
+    {
+      "repository": "upstream/dex5-pr321/teleop/televuer",
+      "commit": "766de45e74373ae0ea66321d942ce538385655a5",
+      "patch": "patches/televuer.patch",
+      "sha256": "2dd0012bd74e118cbc67978268526c142fc5e022cceaf096a9927d162aa6178b",
+      "files": [
+        "src/televuer/televuer.py"
+      ]
+    }
+  ],
+  "protected": {
+    "teleop/robot_control/robot_arm.py": "4b1d72c8aac227fa775d271a0a3c8bf22a108bed2661f9ea97bed3f4c0fdc800",
+    "teleop/robot_control/robot_arm_ik.py": "f395b3ef868ed3c854654b08b33f74ee73f57dbb7c0e8f20440a7f788115a085"
+  },
+  "head_camera_commit": "d90ab16d918324f94cf3fa70f2b8c54059012cc0",
+  "base_repository": "https://github.com/RoboticsCenter/xr_teleoperate",
+  "base_commit": "d0de7e681523cef2e78f7599921bba14368ef1ed"
+}
