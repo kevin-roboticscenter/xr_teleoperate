@@ -5,7 +5,8 @@ Three explicit steps, so a second person (the safety operator) drives the robot 
 while the Quest wearer keeps both hands busy:
   Switch to FSM 4 : optional, the validated whole-body path 0 -> 1 -> 4 of prepare_arm_mode.py
                  (only while teleop is not running; confirm tap; no retries).
-  Walking mode : explicit SDK request 4/601 -> 703, then enable/confirm Arm SDK control.
+  Walk/Run     : explicit SDK request to 601, matching Unitree's LocoClient.Start().
+  Arm walking  : explicit SDK request 4 -> 601 -> 703, then enable/confirm Arm SDK control.
   LAUNCH       : spawn upstream (arms snap to q=0, Dex5 hands open). Needs a confirm tap and
                  a fresh FSM 4 or 703 reading and enabled Arm SDK control.
                  FSM 601 does not accept rt/arm_sdk commands on H2.
@@ -125,10 +126,13 @@ class Fsm:
         elif mode == 703:
             message = ('Walking mode active · enable Arm SDK control' if sdk is False else
                        'Walking mode active · waiting for Arm SDK confirmation')
+        elif mode == 601:
+            message = 'Walk/Run active · use the Unitree remote; arm teleop requires mode 703'
         else:
             message = f'Walking with Quest arms unavailable in mode {mode}'
         return {'ready': ready, 'message': message, 'arm_sdk_enabled': sdk,
-                'arm_sdk_error': self.arm_sdk_error, 'mode_confirmed': mode == 703}
+                'arm_sdk_error': self.arm_sdk_error, 'mode_confirmed': mode == 703,
+                'walk_run_active': mode == 601 and not self.busy}
 
     def to_fixstand(self, teleop_running):
         if self.client is None:
@@ -149,6 +153,23 @@ class Fsm:
         threading.Thread(target=self._transition, args=(path,), daemon=True).start()
         return True, self.msg
 
+    def to_walk_run(self, teleop_running):
+        if self.client is None:
+            return False, self.error
+        if teleop_running:
+            return False, 'Press STOP to end arm teleop before changing body mode'
+        if self.busy:
+            return False, 'Mode switch already in progress'
+        if not self._read():
+            return False, self.error
+        if self.fsm == 601:
+            return False, 'Walk/Run already active; use the Unitree remote'
+        if self.fsm not in (4, 703):
+            return False, 'Prepare standing before enabling Walk/Run'
+        self.busy, self.msg = True, f'Enabling Walk/Run (mode {self.fsm}→601)'
+        threading.Thread(target=self._transition, args=([601],), daemon=True).start()
+        return True, self.msg
+
     def to_motion(self, teleop_running):
         if self.client is None:
             return False, self.error
@@ -162,8 +183,9 @@ class Fsm:
             return False, 'Ready for walking already; use the Unitree remote'
         if self.fsm not in (4, 601, 703):
             return False, 'Prepare FSM 4 with support before enabling arm-compatible motion mode'
-        self.busy, self.msg = True, f'Enabling walking + Quest arms (mode {self.fsm}→703)'
-        threading.Thread(target=self._transition, args=([703],), daemon=True).start()
+        path = [601, 703] if self.fsm == 4 else [703]
+        self.busy, self.msg = True, 'Enabling walking + arms (mode ' + '→'.join(map(str, [self.fsm] + path)) + ')'
+        threading.Thread(target=self._transition, args=(path,), daemon=True).start()
         return True, self.msg
 
     def enable_arm_sdk(self):
@@ -187,7 +209,7 @@ class Fsm:
                         break
                     time.sleep(0.25)
                 else:
-                    self.msg = f'FSM {target} not confirmed within 10 s; switch aborted'
+                    self.msg = f'FSM {target} not confirmed within 10 s (reported FSM {self.current()}); switch aborted'
                     return
             if path[-1] == 703:
                 self.msg = 'Walking mode confirmed; enabling Quest arm control…'
@@ -203,6 +225,8 @@ class Fsm:
                     time.sleep(0.25)
                 else:
                     self.msg = 'Walking setup incomplete: mode 703 and Arm SDK were not both confirmed'
+            elif path[-1] == 601:
+                self.msg = 'Walk/Run confirmed · use the Unitree remote; arm teleop requires mode 703'
             else:
                 self.msg = f'FSM {path[-1]} confirmed'
         except Exception as exc:
@@ -286,6 +310,8 @@ class Upstream:
         with self.lock:
             if target == 4:
                 return self.fsm.to_fixstand(self.running())
+            if target == 601:
+                return self.fsm.to_walk_run(self.running())
             if target == 703:
                 return self.fsm.to_motion(self.running())
             return False, 'Unsupported body-mode request'
@@ -761,7 +787,7 @@ PAGE ='''<!doctype html><html lang="en"><meta charset="utf-8">
 <small id="source-help">Wuji currently uses the calibrated left glove; right fingers keep their last pose. STOP ends arm and Wuji following.</small>
 </section></div>
 <details class="panel wrist-panel"><summary>Wrist cameras<span>Live preview</span></summary><strong>H2 hand cameras</strong><div id="camera-state">Starting cameras…</div><img id="camera-image" alt="Both H2 hand-camera views" hidden><small>A/B identify the two USB feeds; left/right labels await physical confirmation. The current headset video setting appears above; desktop preview and recording remain available. Reload the headset page after LAUNCH or STOP if it disconnects.</small></details>
-<div class="settings-grid"><details class="panel"><summary>Robot mode<span>Stand / walk</span></summary><div id="walking" class="waiting" role="status">Checking walking readiness…</div><div class="secondary-actions"><button id="fsm4" disabled onclick="fsmConfirm()">Prepare standing</button><button id="motion" disabled onclick="motionConfirm()">Enable walking with arm teleop</button></div><small>Walking mode and Arm SDK status do not verify physical balance or the remote link. Use the Unitree remote for body control.</small></details>
+<div class="settings-grid"><details class="panel"><summary>Robot mode<span>Stand / Walk/Run</span></summary><div id="walking" class="waiting" role="status">Checking walking readiness…</div><div class="secondary-actions"><button id="fsm4" disabled onclick="fsmConfirm()">Prepare standing</button><button id="walkrun" disabled onclick="walkRunConfirm()">Enable Walk/Run</button><button id="motion" disabled onclick="motionConfirm()">Arm-compatible walking (703)</button></div><small id="mode-result" role="status"></small><small>Walk/Run selects the same mode as the remote (601). Unitree's arm SDK supports fixed stand (4) and arm-compatible walking (703). Use the Unitree remote for body control.</small></details>
 <details class="panel"><summary>Hand stiffness<span>Fingers & thumb</span></summary><section id="hand-gains">
 <h2 id="gain-heading">Hand stiffness</h2>
 <small>Both hands · 1.00× = original settings · Range 0.50×–2.50× in 0.05× steps. Higher gains are unvalidated tuning settings. Saved settings apply at the next LAUNCH or Grasp &amp; hold. Grip force is not measured.</small>
@@ -806,12 +832,15 @@ async function refresh(){
   try{const r=await fetch('/api/status',{cache:'no-store'});if(!r.ok)throw Error('Status unavailable');const s=await r.json();fails=0;phase=s.phase;
     $('#state').textContent=s.state;$('#state').className=s.phase;$('#log').textContent=s.log;$('#logfile').textContent=s.log_file;
     const f=s.fsm,modeReady=f===4||f===703;$('#fsm').className=modeReady?'ok':'bad';
-    $('#fsm').textContent=s.fsm_busy?('FSM '+f+' · '+s.fsm_msg):f===4?'FSM 4 · fixed stand (use support)':f===703?'FSM 703 · arm-compatible motion mode; confirm stable standing':f===601?'FSM 601 · arms unavailable; select arm-compatible mode 703':f===null?('FSM unavailable ⚠ '+s.fsm_error):('FSM '+f+' · select supported stand or arm-compatible motion mode'+(s.running?' (teleop running! press STOP)':s.fsm_msg?' (last: '+s.fsm_msg+')':''));
+    $('#fsm').textContent=s.fsm_busy?('FSM '+f+' · '+s.fsm_msg):f===4?'FSM 4 · fixed stand (use support)':f===703?'FSM 703 · arm-compatible motion mode; confirm stable standing':f===601?'FSM 601 · Walk/Run active; arm teleop requires mode 703':f===null?('FSM unavailable ⚠ '+s.fsm_error):('FSM '+f+' · select supported stand or arm-compatible motion mode'+(s.running?' (teleop running! press STOP)':s.fsm_msg?' (last: '+s.fsm_msg+')':''));
     $('#fsm4').disabled=busy||s.running||s.fsm_busy||!(f===0||f===1);
     const walking=s.walking||{ready:false,message:'Walking status unavailable'};
-    $('#walking').textContent=walking.message;$('#walking').className=walking.ready?'ready':'waiting';
+    $('#walking').textContent=walking.message;$('#walking').className=walking.ready||walking.walk_run_active?'ready':'waiting';
+    $('#mode-result').textContent=s.fsm_msg||'';
+    $('#walkrun').disabled=busy||s.running||s.fsm_busy||walking.walk_run_active||!(f===4||f===703);
+    $('#walkrun').textContent=walking.walk_run_active?'Walk/Run active':'Enable Walk/Run';
     $('#motion').disabled=busy||s.running||s.fsm_busy||walking.ready||!(f===4||f===601||f===703);
-    $('#motion').textContent=walking.ready?'Walking with arm teleop enabled':'Enable walking with arm teleop';
+    $('#motion').textContent=walking.ready?'Arm-compatible walking active (703)':'Arm-compatible walking (703)';
     renderRec(s.rec||{});
     renderHandGains(s.hand_gains);
     renderGrasp(s.right_grasp,s.running||!!(s.wuji&&s.wuji.active),s.hand_gains);
@@ -827,7 +856,7 @@ async function refresh(){
     renderWuji(s);
     renderPoseMatch(s);
     $('#launch').disabled=busy||s.running||!!(s.wuji&&s.wuji.active)||graspActive||!modeReady||s.fsm_busy;$('#start').disabled=busy||s.phase!=='ready'||!!(s.pose_match&&s.pose_match.enabled&&(!s.pose_match.calibrated||!s.pose_match.robot_matches));$('#stop').disabled=busy||(!s.running&&!(s.wuji&&s.wuji.active));
-  }catch(e){if(++fails>2){$('#auto-rec').disabled=true;$('#grasp-hold').disabled=$('#grasp-release').disabled=true;$('#grasp-state').textContent=graspActive?'Connection lost — H2 was holding and is configured to continue. Live hand status unavailable. Reconnect to release.':'Hold status unavailable — reconnect to H2.';$('#state').textContent='Control page disconnected — check the robot and use its remote if needed';$('#state').className='lost';$('#walking').textContent='Walking readiness unavailable · H2 disconnected';$('#walking').className='waiting';$('#motion').disabled=$('#fsm4').disabled=$('#launch').disabled=$('#start').disabled=true}}
+  }catch(e){if(++fails>2){$('#auto-rec').disabled=true;$('#grasp-hold').disabled=$('#grasp-release').disabled=true;$('#grasp-state').textContent=graspActive?'Connection lost — H2 was holding and is configured to continue. Live hand status unavailable. Reconnect to release.':'Hold status unavailable — reconnect to H2.';$('#state').textContent='Control page disconnected — check the robot and use its remote if needed';$('#state').className='lost';$('#walking').textContent='Walking readiness unavailable · H2 disconnected';$('#walking').className='waiting';$('#walkrun').disabled=$('#motion').disabled=$('#fsm4').disabled=$('#launch').disabled=$('#start').disabled=true}}
 }
 function renderPoseMatch(s){
   const p=s.pose_match||{};$('#pose-match').hidden=!p.enabled;
@@ -972,6 +1001,9 @@ function toggleRec(){send(recOn?'rec-stop':'rec-start')}
 function fsmConfirm(){
   if(confirm('The whole body will power up (0→1→4); legs and torso will move.\\nIs the robot on the gantry or standing stably, with nobody nearby?'))send('fsm4');
 }
+function walkRunConfirm(){
+  if(confirm('Enable Unitree Walk/Run mode (601). The legs may move or step. Use the Unitree remote for walking. Arm teleop is unavailable in this mode.'))send('walk-run');
+}
 function motionConfirm(){
   if(confirm('Enable walking with arm teleop using Unitree mode 703. The legs may move or step.\\nBoth feet must be on the ground; keep support until stable. Use the Unitree remote for walking. Dashboard STOP ends arm teleop only.'))send('motion');
 }
@@ -1099,6 +1131,7 @@ def handler(up, rec, auto=None):
                        '/api/head-recenter': lambda: up._send('CMD_HEAD_RECENTER'),
                        '/api/wuji/test-right': lambda: up.start_wuji_test('right'),
                        '/api/fsm4': lambda: up.body_mode(4),
+                       '/api/walk-run': lambda: up.body_mode(601),
                        '/api/motion': lambda: up.body_mode(703),
                        '/api/rec-start': auto.manual_start if auto else rec.start,
                        '/api/rec-stop': auto.manual_stop if auto else rec.stop,

@@ -1,6 +1,7 @@
 """Exercise body-mode requests with a fake SDK; these tests never contact a robot."""
 import importlib.machinery
 import importlib.util
+import json
 import os
 from pathlib import Path
 import sys
@@ -8,6 +9,8 @@ import threading
 import time
 import unittest
 from unittest.mock import Mock, patch
+from types import SimpleNamespace
+from urllib.request import Request, urlopen
 
 source = Path(os.environ.get('H2_WEB_SOURCE', Path(__file__).resolve().parents[1] / 'deployment/robot/quest_h2_web.py'))
 root = Path(os.environ.get('H2_DEPLOY_ROOT', Path(__file__).resolve().parents[1]))
@@ -74,7 +77,7 @@ class BodyModeTests(unittest.TestCase):
             self.assertTrue(obj.to_motion(False)[0])
             self.assertEqual(obj.client.requests, [])
             self.assertTrue(obj.busy)
-            self.assertEqual(worker.call_args.kwargs['args'], ([703],))
+            self.assertEqual(worker.call_args.kwargs['args'], ([601, 703],))
             worker.return_value.start.assert_called_once()
             self.assertFalse(obj.to_motion(False)[0])
             self.assertEqual(worker.call_count, 1)
@@ -127,6 +130,33 @@ class BodyModeTests(unittest.TestCase):
             self.assertTrue(obj.to_motion(False)[0])
             self.assertEqual(worker.call_args.kwargs['args'], ([703],))
             self.assertEqual(obj.client.requests, [])
+
+    def test_combined_walking_confirms_walk_run_before_requesting_arm_mode(self):
+        obj = fsm()
+        obj.busy = True
+        obj._transition([601, 703])
+        self.assertEqual(obj.client.requests, [601, 703])
+        self.assertEqual(obj.client.enable_calls, 1)
+        self.assertTrue(obj.walking_status()['ready'])
+
+    def test_failed_walk_run_stage_does_not_request_arm_mode(self):
+        obj = fsm(result=7302)
+        obj.busy = True
+        obj._transition([601, 703])
+        self.assertEqual(obj.client.requests, [601])
+        self.assertEqual(obj.client.enable_calls, 0)
+        self.assertFalse(obj.walking_status()['ready'])
+
+    def test_unconfirmed_walk_run_stage_does_not_request_arm_mode(self):
+        obj = fsm()
+        obj._read = Mock(return_value=False)
+        obj.current = lambda: 4
+        obj.busy = True
+        with patch.object(web.time, 'monotonic', side_effect=[0, 11]):
+            obj._transition([601, 703])
+        self.assertEqual(obj.client.requests, [601])
+        self.assertEqual(obj.client.enable_calls, 0)
+        self.assertFalse(obj.busy)
 
     def test_launch_rejects_601_before_enabling_sdk_or_spawning(self):
         up = web.Upstream.__new__(web.Upstream)
@@ -227,6 +257,91 @@ class WalkingReadinessTests(unittest.TestCase):
         obj.walking_status()
         self.assertEqual(obj.client.requests, [])
         self.assertEqual(obj.client.enable_calls, 0)
+
+
+class WalkRunTests(unittest.TestCase):
+    def test_explicit_walk_run_request_selects_601_from_supported_stand_or_walking(self):
+        for state in (4, 703):
+            with self.subTest(state=state):
+                obj = fsm(state)
+                with patch.object(web.threading, 'Thread') as worker:
+                    self.assertTrue(obj.to_walk_run(False)[0])
+                    self.assertEqual(worker.call_args.kwargs['args'], ([601],))
+                    worker.return_value.start.assert_called_once()
+                    self.assertEqual(obj.client.requests, [])
+                    self.assertFalse(obj.to_walk_run(False)[0])
+                    self.assertEqual(worker.call_count, 1)
+
+    def test_running_unprepared_and_unavailable_states_send_no_request(self):
+        for state, running in ((4, True), (0, False), (1, False), (None, False)):
+            with self.subTest(state=state, running=running):
+                obj = fsm(state)
+                if state is None:
+                    obj.client.GetFsmId = lambda: (3102, None)
+                self.assertFalse(obj.to_walk_run(running)[0])
+                self.assertEqual(obj.client.requests, [])
+                self.assertEqual(obj.client.enable_calls, 0)
+
+    def test_already_active_does_not_reissue_mode_or_enable_arm_sdk(self):
+        obj = fsm(601)
+        ok, message = obj.to_walk_run(False)
+        self.assertFalse(ok)
+        self.assertIn('already active', message)
+        self.assertEqual(obj.client.requests, [])
+        self.assertEqual(obj.client.enable_calls, 0)
+
+    def test_601_confirmation_never_claims_arm_teleop_ready(self):
+        obj = fsm()
+        obj.busy = True
+        obj._transition([601])
+        self.assertEqual(obj.client.requests, [601])
+        self.assertEqual(obj.client.enable_calls, 0)
+        self.assertFalse(obj.busy)
+        self.assertIn('Walk/Run confirmed', obj.msg)
+        self.assertTrue(obj.walking_status()['walk_run_active'])
+        self.assertFalse(obj.walking_status()['ready'])
+        self.assertFalse(obj.walking_status()['mode_confirmed'])
+        obj.fsm_time -= 4
+        self.assertFalse(obj.walking_status()['walk_run_active'])
+
+    def test_failed_walk_run_request_does_not_try_another_mode(self):
+        obj = fsm(result=7302)
+        obj.busy = True
+        obj._transition([601])
+        self.assertEqual(obj.client.requests, [601])
+        self.assertEqual(obj.client.state, 4)
+        self.assertFalse(obj.walking_status()['walk_run_active'])
+        self.assertEqual(obj.client.enable_calls, 0)
+
+    def test_timeout_reports_actual_mode_without_retrying(self):
+        obj = fsm()
+        obj._read = Mock(return_value=False)
+        obj.current = lambda: 4
+        obj.busy = True
+        with patch.object(web.time, 'monotonic', side_effect=[0, 11]):
+            obj._transition([601])
+        self.assertEqual(obj.client.requests, [601])
+        self.assertIn('reported FSM 4', obj.msg)
+        self.assertFalse(obj.busy)
+
+    def test_http_routes_keep_walk_run_and_arm_walking_distinct(self):
+        up = web.Upstream.__new__(web.Upstream)
+        up.body_mode = Mock(return_value=(True, 'scheduled'))
+        recorder = SimpleNamespace(start=lambda: (True, ''), stop=lambda: (True, ''))
+        server = web.ThreadingHTTPServer(('127.0.0.1', 0), web.handler(up, recorder))
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        try:
+            base = f'http://127.0.0.1:{server.server_port}'
+            for route, target in (('walk-run', 601), ('motion', 703)):
+                with urlopen(Request(base + '/api/' + route, method='POST'), timeout=3) as response:
+                    self.assertEqual(response.status, 200)
+                    self.assertEqual(json.load(response)['message'], 'scheduled')
+                up.body_mode.assert_called_with(target)
+        finally:
+            server.shutdown()
+            server.server_close()
+            worker.join(timeout=2)
 
 
 if __name__ == '__main__':
