@@ -20,6 +20,17 @@ HOLD_SECONDS = 1.
 ASSESSMENT_MAX_AGE = .35
 
 
+def matching_enabled(root):
+    """An operator setting; existing calibrations are preserved when disabled."""
+    try:
+        value = json.loads((Path(root)/'config/pico_pose_match_settings.json').read_text())
+    except FileNotFoundError:
+        return True
+    if not isinstance(value, dict) or type(value.get('enabled')) is not bool:
+        raise ValueError('Pose matching settings must contain an enabled boolean')
+    return value['enabled']
+
+
 def distance(a, b):
     return math.sqrt(sum((x-y)**2 for x, y in zip(a, b)))
 

@@ -4,6 +4,12 @@ Native wrist modes (`pico_wuji`, `pico_dual_wuji`, `pico_tracker_hands`) use a
 taught start-pose reference. The existing Unitree PR321 arm controller, IK,
 Dex5 retargeter, gains and body-mode requests are unchanged.
 
+Pose matching is optional. Set `config/pico_pose_match_settings.json` to
+`{"enabled": false}` to use direct **Start following**, preserving the saved
+reference. Set it to true to restore the check. Changing this setting cancels a
+pending check without automatically starting following. Use Stop before updating
+an already prepared process. Live wrist/head/finger input is still required.
+
 ## First use or changed wearer / tracker mounting
 
 1. Connect the existing native PICO input and required finger source. In

@@ -22,7 +22,7 @@ from quest_h2_teleop import UPSTREAM, environment
 from pico_tracker.geometry import IncrementalWrist, heading_basis, pose_valid
 from pico_tracker.input import read_frame, TrackerInput
 from pico_tracker.hands import OpticalFingers, hands_status
-from pico_tracker.pose_match import PoseReference
+from pico_tracker.pose_match import PoseReference, matching_enabled
 from head_camera.head_follow import HeadPoseMapper, HeadCommandPublisher, settings as head_settings
 
 
@@ -113,9 +113,10 @@ def main():
                     raise ValueError(hands_status(frame)['message'])
                 q = controller.get_current_dual_arm_q()
                 poses = measured_wrists(q)
-                match = reference.assess(frame, poses, config, sides)
-                if not match['ready']:
-                    raise ValueError(match['message'])
+                if matching_enabled(ROOT):
+                    match = reference.assess(frame, poses, config, sides)
+                    if not match['ready']:
+                        raise ValueError(match['message'])
                 mappers = {side: IncrementalWrist(frame['trackers'][sn], poses[side], basis,
                            config.get('offset_tracker_m' if side == 'left' else 'right_offset_tracker_m', [0., 0., 0.]))
                            for side, sn in serials.items()}

@@ -12,7 +12,7 @@ from http.server import ThreadingHTTPServer
 from urllib.request import Request, urlopen
 
 from pico_tracker.geometry import rotation, matvec
-from pico_tracker.pose_match import PoseReference, MatchDwell
+from pico_tracker.pose_match import PoseReference, MatchDwell, matching_enabled
 from test_hybrid_hands import controller, web
 
 CONFIG = {'left_sn': 'TEST_LEFT', 'right_sn': 'TEST_RIGHT',
@@ -282,6 +282,37 @@ class DeferredFollowing(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join(timeout=2)
+
+
+class OptionalMatching(unittest.TestCase):
+    def test_disabled_setting_preserves_the_taught_reference(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            reference=PoseReference(root)
+            reference.save(sample(),wrists(),CONFIG,SIDES)
+            before=reference.path.read_bytes()
+            self.assertTrue(matching_enabled(root))
+            (root/'config/pico_pose_match_settings.json').write_text('{"enabled":false}')
+            self.assertFalse(matching_enabled(root))
+            self.assertEqual(reference.path.read_bytes(),before)
+
+    def test_disabled_matching_starts_directly_but_still_requires_live_input(self):
+        up,events=prepared('pico_tracker_hands')
+        up.hb.pop('POSE_MATCH')
+        with patch.object(web,'matching_enabled',return_value=False):
+            self.assertFalse(up.pose_match_status(up.hb)['enabled'])
+            up.tracker.status.return_value={'ready':False,'message':'Show hands'}
+            self.assertFalse(up.start()[0]);self.assertEqual(events,[])
+            up.tracker.status.return_value={'ready':True,'message':'Ready'}
+            self.assertTrue(up.start()[0])
+            self.assertEqual(events,['CMD_START'])
+
+    def test_disabling_a_pending_check_does_not_automatically_start(self):
+        up,events=prepared()
+        with patch.object(web,'matching_enabled',return_value=True):self.assertTrue(arm_wait(up))
+        with patch.object(web,'matching_enabled',return_value=False):up._wait_for_pose(up.pose_wait_generation)
+        self.assertFalse(up.pose_waiting)
+        self.assertEqual(events,[])
 
 
 if __name__ == '__main__':

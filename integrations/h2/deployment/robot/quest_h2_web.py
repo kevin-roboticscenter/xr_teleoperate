@@ -39,7 +39,7 @@ import zmq
 from quest_h2_teleop import (GAIN_SETTINGS_PATH, ROOT, UPSTREAM, command, environment,
                             PICO_HAND_SOURCE, NATIVE_SOURCES)
 from pico_tracker.input import TrackerInput
-from pico_tracker.pose_match import MatchDwell
+from pico_tracker.pose_match import MatchDwell, matching_enabled
 from head_camera.head_follow import settings as head_settings
 from teleop.utils.dex5_gains import GainProfile, GainStore, MIN_MULTIPLIER, MAX_MULTIPLIER
 
@@ -452,7 +452,7 @@ class Upstream:
                 return False, 'Enter the headset browser XR view and enable live head tracking before START'
             if getattr(self, 'hand_source', 'vr') in NATIVE_SOURCES and not self.tracker_status()['ready']:
                 return False, self.tracker_status()['message']
-            if getattr(self, 'hand_source', 'vr') in POSE_MATCH_SOURCES:
+            if getattr(self, 'hand_source', 'vr') in POSE_MATCH_SOURCES and matching_enabled(ROOT):
                 assessment = hb.get('POSE_MATCH', {})
                 if not assessment.get('calibrated'):
                     return False, assessment.get('message', 'Match the prepared robot and Save matching pose first')
@@ -528,6 +528,10 @@ class Upstream:
                 with self.lock:
                     if not self.pose_waiting or generation != self.pose_wait_generation:
                         return
+                    if not matching_enabled(ROOT):
+                        self.pose_waiting = False
+                        self.pose_wait_message = 'Pose matching off; press Start following'
+                        return
                     if not self.running() or self.hb.get('STOP'):
                         self.pose_waiting = False
                         self.pose_wait_message = 'Pose check cancelled; prepare arms again'
@@ -545,7 +549,7 @@ class Upstream:
             print(time.strftime('%H:%M:%S'), 'pose-match/error', str(exc), flush=True)
 
     def pose_match_status(self, hb):
-        enabled = getattr(self, 'hand_source', 'vr') in POSE_MATCH_SOURCES
+        enabled = getattr(self, 'hand_source', 'vr') in POSE_MATCH_SOURCES and matching_enabled(ROOT)
         value = dict(hb.get('POSE_MATCH', {})) if enabled else {}
         waiting = bool(getattr(self, 'pose_waiting', False))
         value.update(enabled=enabled, waiting=waiting,
