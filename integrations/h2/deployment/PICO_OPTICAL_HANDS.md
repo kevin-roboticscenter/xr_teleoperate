@@ -1,7 +1,7 @@
 # PICO wrist trackers + PICO optical fingers
 
-This addition is prepared and tested offline. H2 was powered off during the
-work, so deployment and physical validation are pending.
+This addition was prepared and tested offline, then installed on the existing
+PC2 integration while teleop was idle. Physical following validation is pending.
 
 ## Operator flow after deployment
 

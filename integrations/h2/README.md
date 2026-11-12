@@ -67,6 +67,12 @@ copy is the deployed entry point. The same applies to `quest_wuji.py`.
 `deployment/laptop_h2_socat.sh` supervises the laptop gateway/forwarders.
 See [the operator flow](OPERATOR_FLOW.md) before launching motion.
 
+The laptop gateway also serves `/wuji-calibration`, including when H2 is offline.
+It provides named SDK profiles, glove discovery/assignment, the official live
+hand-model calibration workflow, cancellation, backup and save verification.
+See [glove calibration](deployment/WUJI_CALIBRATION.md). Calibration begins only
+when the operator selects a glove/profile/hand and starts it on that page.
+
 ## Supported modes
 
 - Browser Quest/PICO wrist and finger tracking.
@@ -74,7 +80,7 @@ See [the operator flow](OPERATOR_FLOW.md) before launching motion.
 - Native PICO left wrist tracker with a Wuji left glove.
 - Native PICO both wrist trackers with both Wuji gloves.
 - Native PICO both wrist trackers with PICO optical finger tracking, without
-  Wuji gloves (prepared offline; deployment and physical validation pending).
+  Wuji gloves (installed while teleop was idle; physical validation pending).
 - Native PICO head-only following, holding the measured arm posture and
   leaving fingers idle.
 - Right-finger-only testing and standalone right-hand grasp/hold.

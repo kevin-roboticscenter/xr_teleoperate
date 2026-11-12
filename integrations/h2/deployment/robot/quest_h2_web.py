@@ -613,6 +613,7 @@ PAGE ='''<!doctype html><html lang="en"><meta charset="utf-8">
 </select>
 <button id="wuji-connect" onclick="send('wuji/connect')" style="font-size:20px;padding:14px;background:#1e40af" disabled>Connect Wuji glove</button>
 <div id="wuji-state" role="status">Reading glove status…</div>
+<p><a href="/wuji-calibration" target="_blank" rel="noopener">Calibrate Wuji gloves / select operator profile</a></p>
 <details class="help" id="glove-tests"><summary>Individual hand test</summary><div id="right-glove-test" hidden>
 <button id="right-glove-connect" onclick="send('wuji/right/connect')" style="font-size:18px;padding:12px;background:#1e40af">Connect right glove</button>
 <button id="right-glove-start" onclick="send('wuji/test-right')" style="font-size:18px;padding:12px;background:#15803d">START right-hand test</button>

@@ -17,6 +17,16 @@ mode: Prepare standing / FSM4 for supported testing. Changing input modes
 requires Stop following. Save stiffness changes before Prepare arms.
 Preparing an arm mode moves the robot arms toward their initial pose.
 
+## Wuji glove calibration
+
+Open `http://LAPTOP_IP:8787/wuji-calibration` on the laptop. This page works with
+H2 powered off. Select/create the operator profile, scan/select the glove and
+choose left or right. Reuse the saved calibration or start the guided six-pose
+hand-model fit. Existing models require replacement confirmation and are backed
+up first. After success, return to teleop and reconnect Wuji input.
+
+See [the full workflow](deployment/WUJI_CALIBRATION.md).
+
 ## Browser arms and headset hands
 
 1. Select **PICO / Quest browser · arms + hands**.
@@ -51,7 +61,7 @@ XRoboToolkit head following and its camera view are separate from this mode.
 5. Trackers drive arms and wrists; PICO optical hand tracking drives fingers.
    Stop ends both and returns the arms home. Walking stays under the remote.
 
-This mode is staged offline; see [deployment](deployment/PICO_OPTICAL_HANDS.md).
+This mode is installed; see [deployment](deployment/PICO_OPTICAL_HANDS.md). Physical following validation is pending.
 
 ## Native PICO left wrist and Wuji left hand
 

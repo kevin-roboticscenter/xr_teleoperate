@@ -4,6 +4,7 @@
 The robot dashboard owns motor START/STOP. Connecting here sends input only.
 """
 from http.client import HTTPConnection
+from contextlib import nullcontext
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import argparse
 import json
@@ -15,11 +16,12 @@ import socket
 import subprocess
 import sys
 import threading
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, parse_qs
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 import h2_link
+from wuji_glove.calibration import CalibrationManager, CalibrationError
 
 
 class GloveBridge:
@@ -168,7 +170,27 @@ class TrackerBridge(GloveBridge):
             return True, 'PICO input connected; native app needs Head + Object Tracking + Send'
 
 
-def handler(bridge, tracker=None, video=None):
+def require_robot_idle():
+    """Calibration can run with H2 offline; an active online session must stop."""
+    connection = HTTPConnection(h2_link.selected_host(), 8787, timeout=2)
+    try:
+        connection.request('GET', '/api/status')
+        response = connection.getresponse()
+        if response.status != 200:
+            return
+        state = json.loads(response.read())
+        if state.get('running') or (state.get('wuji') or {}).get('active'):
+            raise CalibrationError('Stop teleoperation and individual hand tests before glove calibration or profile changes.')
+    except (OSError, ValueError) as error:
+        if isinstance(error, CalibrationError):
+            raise
+        # Closing the laptop glove sources prevents calibration samples from
+        # entering the robot input path, even when H2 is powered off.
+    finally:
+        connection.close()
+
+
+def handler(bridge, tracker=None, video=None, calibration=None):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_): pass
 
@@ -188,7 +210,8 @@ def handler(bridge, tracker=None, video=None):
                 if not 0 <= length <= 65536:
                     return self.reply(413, {'message': 'Request is too large'})
                 body = self.rfile.read(length) if length else None
-                connection = HTTPConnection(h2_link.selected_host(), 8787, timeout=35 if self.path == '/api/start' else 20)
+                page = self.command == 'GET' and urlsplit(self.path).path in ('/', '/h2-teleop')
+                connection = HTTPConnection(h2_link.selected_host(), 8787, timeout=2 if page else 35 if self.path == '/api/start' else 20)
                 connection.request(self.command, self.path, body,
                                    {'Content-Type': self.headers.get('Content-Type', 'application/json')})
                 response = connection.getresponse()
@@ -198,6 +221,8 @@ def handler(bridge, tracker=None, video=None):
                     status['glove_bridge'] = bridge.status()
                     status['tracker_bridge'] = tracker.status() if tracker else None
                     status['head_video'] = video.status() if video else None
+                    if calibration is not None:
+                        status['calibration'] = calibration.status()
                     data = json.dumps(status).encode()
                 if self.command == 'POST' and self.path == '/api/hand-source' and response.status == 200:
                     if json.loads(body)['source'] in ('vr', 'pico_head', 'pico_tracker_hands'): bridge.close()
@@ -212,16 +237,62 @@ def handler(bridge, tracker=None, video=None):
                 else:
                     self.reply(response.status, data, response.getheader('Content-Type', 'application/json'))
             except (OSError, ValueError) as exc:
+                if self.command == 'GET' and urlsplit(self.path).path in ('/', '/h2-teleop'):
+                    return self.reply(503, b'<!doctype html><meta name="viewport" content="width=device-width"><title>H2 offline</title><h1>H2 is unavailable</h1><p>Glove calibration runs on this laptop and works with H2 powered off.</p><p><a href="/wuji-calibration">Open Wuji glove calibration</a></p>', 'text/html; charset=utf-8')
                 self.reply(503, {'message': f'H2 connection unavailable: {exc}'})
             finally:
                 if connection is not None: connection.close()
 
-        def do_GET(self): self.proxy()
+        def do_GET(self):
+            route = urlsplit(self.path)
+            if calibration is not None:
+                try:
+                    if route.path == '/wuji-calibration':
+                        return self.reply(200, (ROOT/'wuji_glove/calibration.html').read_bytes(), 'text/html; charset=utf-8')
+                    if route.path == '/api/wuji/calibration':
+                        return self.reply(200, calibration.status())
+                    if route.path == '/api/wuji/calibration/setup':
+                        return self.reply(200, calibration.setup(scan=parse_qs(route.query).get('scan') == ['1']))
+                except (OSError, ValueError, subprocess.SubprocessError) as error:
+                    return self.reply(409, {'message': str(error)})
+            self.proxy()
+
+        def json_body(self):
+            length = int(self.headers.get('Content-Length', '0'))
+            if not 0 <= length <= 8192:
+                raise CalibrationError('Request is too large.')
+            data = json.loads(self.rfile.read(length)) if length else {}
+            if not isinstance(data, dict):
+                raise CalibrationError('Expected a JSON object.')
+            return data
 
         def do_POST(self):
             origin = self.headers.get('Origin')
             if origin and urlsplit(origin).netloc != self.headers.get('Host'):
                 return self.reply(403, {'message': 'Use this dashboard to send commands'})
+            if calibration is not None and self.path.startswith('/api/wuji/calibration/'):
+                try:
+                    data = self.json_body()
+                    if self.path == '/api/wuji/calibration/start':
+                        return self.reply(202, calibration.start(data))
+                    if self.path == '/api/wuji/calibration/cancel':
+                        return self.reply(200, calibration.cancel())
+                    if self.path == '/api/wuji/calibration/profile':
+                        return self.reply(200, calibration.profile(data.get('action'), data.get('name')))
+                    if self.path == '/api/wuji/calibration/assign':
+                        return self.reply(200, calibration.assign(data))
+                    return self.reply(404, {'message': 'Unknown calibration action.'})
+                except (OSError, ValueError, subprocess.SubprocessError) as error:
+                    return self.reply(409, {'message': str(error)})
+            exclusive = self.path in ('/api/wuji/connect', '/api/wuji/right/connect',
+                                      '/api/wuji/test-right', '/api/start', '/api/launch')
+            try:
+                with (calibration.idle_operation() if calibration is not None and exclusive else nullcontext()):
+                    self.post_action()
+            except CalibrationError as error:
+                self.reply(409, {'message': str(error)})
+
+        def post_action(self):
             if self.path == '/api/wuji/right/connect' and hasattr(bridge, 'hands'):
                 try:
                     ok, message = bridge.hands['right'].connect()
@@ -262,13 +333,15 @@ def main():
     tracker = TrackerBridge()
     from head_camera.video_service import PicoVideoService
     video = PicoVideoService(ROOT, h2_link.selected_host())
-    server = ThreadingHTTPServer((args.host, args.port), handler(bridge, tracker, video))
+    calibration = CalibrationManager(ROOT, bridge.close, require_robot_idle)
+    server = ThreadingHTTPServer((args.host, args.port), handler(bridge, tracker, video, calibration))
     def stop(*_): raise KeyboardInterrupt
     signal.signal(signal.SIGTERM, stop)
     try: server.serve_forever()
     except KeyboardInterrupt: pass
     finally:
         server.server_close()
+        calibration.close()
         bridge.close()
         tracker.close()
         video.close()
