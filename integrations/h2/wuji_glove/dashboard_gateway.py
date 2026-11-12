@@ -29,7 +29,7 @@ def ssh_command(host, control):
     """Use independent key-authenticated input links; retain older login sessions."""
     key = Path(os.environ.get('H2_SSH_KEY', str(Path.home()/'.ssh/h2_teleop_ed25519'))).expanduser()
     args = ['ssh', '-C', '-o', 'HostKeyAlias=192.168.124.162',
-            '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5']
+            '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10']
     if key.is_file():
         # A blocked glove stream must not queue PICO poses or management commands
         # behind itself on the same multiplexed TCP connection.
@@ -75,7 +75,7 @@ class GloveBridge:
             host = h2_link.selected_host(config)
             control = Path.home() / 'h2-network-switch' / ('.ssh-wifi' if config['mode'] == 'wifi' else '.ssh-ethernet')
             ssh = ssh_command(host, control)
-            probe = subprocess.run(ssh + ['true'], capture_output=True, timeout=7)
+            probe = subprocess.run(ssh + ['true'], capture_output=True, timeout=20)
             if probe.returncode:
                 self.error = 'H2 SSH login needed before connecting the glove'
                 return False, self.error
@@ -160,7 +160,7 @@ class TrackerBridge(GloveBridge):
             host = h2_link.selected_host(config)
             control = Path.home() / 'h2-network-switch' / ('.ssh-wifi' if config['mode'] == 'wifi' else '.ssh-ethernet')
             ssh = ssh_command(host, control)
-            probe = subprocess.run(ssh + ['true'], capture_output=True, timeout=7)
+            probe = subprocess.run(ssh + ['true'], capture_output=True, timeout=20)
             if probe.returncode:
                 self.error = 'H2 SSH login needed before connecting PICO input'
                 return False, self.error
