@@ -65,7 +65,7 @@ class DashboardAutoRecordingTests(unittest.TestCase):
             self.assertTrue(self.auto.status()['enabled'])
 
     def test_accepted_start_wakes_recording_worker_and_failed_start_does_not(self):
-        self.up.hb={'READY':True,'START':False}
+        self.up.hb={'READY':True,'START':False,'HEAD_READY':True}
         self.up.hb_time=time.monotonic()
         self.up._send=Mock(return_value=(False,'test rejection'))
         self.up.auto_recording=Mock()
@@ -91,6 +91,7 @@ class DashboardAutoRecordingTests(unittest.TestCase):
             recorder.start();second=recorder.dir
         self.assertNotEqual(first,second)
         self.assertIn('--camera-streams',spawn.call_args.args[0])
+        self.assertIn('--head-camera',spawn.call_args.args[0])
 
 
 if __name__ == '__main__':

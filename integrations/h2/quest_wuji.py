@@ -134,7 +134,7 @@ class WujiHand:
                 if any(x.endswith('/left_dex5_adapter.py') for x in argv) and '--publish-'+self.side in argv:
                     if self.process is None or int(entry.name) != self.process.pid:
                         return f'Stop the existing {self.side}-hand test first'
-                if any(x.endswith('/teleop_hand_and_arm.py') for x in argv) and '--ee' in argv:
+                if any(x.endswith(('/teleop_hand_and_arm.py', '/head_camera/browser_teleop.py')) for x in argv) and '--ee' in argv:
                     if argv[argv.index('--ee') + 1] == 'dex5':
                         return 'VR finger control is running; STOP before switching to Wuji'
             except (OSError, UnicodeError, IndexError): pass

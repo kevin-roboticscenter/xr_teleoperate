@@ -27,6 +27,13 @@ up first. After success, return to teleop and reconnect Wuji input.
 
 See [the full workflow](deployment/WUJI_CALIBRATION.md).
 
+## Head movement and video in any control mode
+
+Enable **Follow headset** before preparing. Browser modes use the live headset
+browser XR view; native PICO modes use XRoboToolkit **Head + Send**. Look forward
+at START. REC and automatic recording now save **head.mp4** alongside the wrist
+recordings, including in head-only mode. See [head following and video](deployment/HEAD_FOLLOW_VIDEO.md).
+
 ## Browser arms and headset hands
 
 1. Select **PICO / Quest browser · arms + hands**.
@@ -37,8 +44,8 @@ See [the full workflow](deployment/WUJI_CALIBRATION.md).
 5. **Stop following** ends the session and returns the arms home. Reload the
    headset browser after the next Prepare arms if its connection was closed.
 
-This mode uses browser hand/wrist tracking for the arms and fingers. Native
-XRoboToolkit head following and its camera view are separate from this mode.
+This mode uses browser hand/wrist tracking for the arms and fingers. Head following uses the browser head pose in this mode. Native PICO Remote
+Vision is a separate headset video receiver.
 
 ## Browser arms and Wuji left fingers
 

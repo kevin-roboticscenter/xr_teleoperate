@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Record one take on PC2: both USB hand cameras + arm/hand joint data, read-only.
+"""Record one take on PC2: head/wrist video + existing joint data, read-only.
 
 Sends nothing to the robot. Started/stopped (SIGINT) by quest_h2_web.py's REC button,
 or by hand:  ~/anaconda3/envs/tv/bin/python h2_record.py --out ~/h2-recordings/test
 
 Output directory:
   cam_a.mjpeg / cam_b.mjpeg   camera or TeleImager JPEG bytes, one JPEG per frame
+  head.mp4                    head-camera H.264 video when --head-camera is selected
   cam_a_frames.csv / ...      frame index, wall-clock time (PC2 time.time()), byte size
   joints.csv                  50 Hz snapshot: arm state/cmd (14 + 14), Dex5 state/cmd (40 + 40); empty = no fresh data
   meta.json                   settings, column groups, start/end, frame/row counts, topic rates
@@ -214,6 +215,7 @@ def main():
     parser.add_argument('--size', default='1920x1080', help='camera capture size, MJPEG (1920x1080 or 1280x720)')
     parser.add_argument('--fps', type=int, default=30)
     parser.add_argument('--camera-streams', action='store_true', help='Record the existing TeleImager wrist streams')
+    parser.add_argument('--head-camera', action='store_true', help='Include the existing PC3 head-camera stream as head.mp4')
     parser.add_argument('--joint-hz', type=float, default=50.0)
     parser.add_argument('--max-minutes', type=float, default=20.0, help='stop by itself after this long')
     parser.add_argument('--network-interface', default='eth0')
@@ -242,6 +244,13 @@ def main():
     cams = [Camera(n, p, out, size, args.fps, stop,
                    stream_port=(55556 if n == 'cam_a' else 55557) if args.camera_streams else None)
             for n, p in CAMS.items()]
+    if args.head_camera:
+        from head_camera.recording import HeadVideo
+        head = HeadVideo(out, args.fps, stop, Path(__file__).parent/'head_camera/receiver.json')
+        cams.append(head)
+        meta['cameras']['head'] = dict(head.config, source='teleimager', file='head.mp4', codec='H.264',
+                                       rotation='already upright', fps=args.fps)
+        write_json(out/'meta.json', meta)
     for cam in cams:
         cam.start()
     joints = None
@@ -267,6 +276,9 @@ def main():
             stop.set()
     for thread in cams + ([joints] if joints else []):
         thread.join(timeout=5)
+        if thread.is_alive() and getattr(thread, 'name', '') == 'head':
+            thread.finish_encoder(force=True)
+            thread.join(timeout=1)
     meta.update(ended=time.time(), duration=round(time.time() - started, 2), final_status=status(True))
     write_json(out / 'meta.json', meta)
     write_json(out / 'status.json', status(True))

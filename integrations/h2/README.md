@@ -85,7 +85,7 @@ when the operator selects a glove/profile/hand and starts it on that page.
   leaving fingers idle.
 - Right-finger-only testing and standalone right-hand grasp/hold.
 
-The dashboard offers optional neck following for native wrist/glove sessions.
+The dashboard offers optional neck following for every browser and native control mode.
 One upper-body writer combines the arm and head commands; it does not run
 competing arm/head DDS publishers. Unitree's SDK supports FSM4 and703 for
 these commands. Walking uses the existing Unitree motion controller/remote.
@@ -113,8 +113,9 @@ repeated for both display eyes; stereoscopic depth is not enabled.
 Capture and desktop reception were verified at720p30. PICO viewing was
 confirmed by the operator, typically15–20fps over the tested wireless path.
 Both eyes captured individual1080p images; NVIDIA's stereo compositor attempt
-failed, so it is not the active source. Head-camera recording is not enabled.
-Wrist/joint recording remains available for arm sessions.
+failed, so it is not the active source. Recording now includes head.mp4 from the existing head-camera stream, plus
+the existing wrist/joint captures. Automatic recording covers head-only sessions.
+See [head following and video](deployment/HEAD_FOLLOW_VIDEO.md).
 
 ## Validation and remaining work
 

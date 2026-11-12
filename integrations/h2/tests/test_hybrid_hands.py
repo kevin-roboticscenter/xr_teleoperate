@@ -41,7 +41,7 @@ def controller(source='wuji', active=False, start_ok=True, ipc_ok=True):
     events = []
     up.lock = threading.Lock()
     up.hand_source = source
-    up.hb = {'READY': True, 'START': False}
+    up.hb = {'READY': True, 'START': False, 'HEAD_READY': True}
     up.online = lambda: True
     up.wuji = Glove(events, active, start_ok)
     up.auto_recording = None

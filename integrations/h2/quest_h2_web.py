@@ -271,7 +271,7 @@ class Upstream:
     @staticmethod
     def external_pids():
         # argv0 must be a python interpreter, so shells/ssh whose command line mentions the file never match
-        out = subprocess.run(['pgrep', '-f', r'^[^ ]*python[0-9.]* [^ ]*(teleop_hand_and_arm|arm_teleop|head_only)\.py'],
+        out = subprocess.run(['pgrep', '-f', r'^[^ ]*python[0-9.]* [^ ]*(teleop_hand_and_arm|browser_teleop|arm_teleop|head_only)\.py'],
                              capture_output=True, text=True).stdout
         return [int(p) for p in out.split()]
 
@@ -350,8 +350,6 @@ class Upstream:
         with self.lock:
             if self.running():
                 return False, 'STOP before changing head following'
-            if enabled and self.hand_source not in NATIVE_SOURCES:
-                return False, 'Select a native PICO mode first'
             path = ROOT / 'config/head_follow.json'
             path.parent.mkdir(parents=True, exist_ok=True)
             temporary = path.with_suffix('.tmp')
@@ -438,7 +436,7 @@ class Upstream:
             running = self.running()
             pids = ([self.process.pid] if self.process is not None else self.external_pids()) if running else []
             return {'running': bool(pids), 'session': tuple(sorted(pids)) if pids else None,
-                    'started': bool(self.online() and self.hb.get('START') and getattr(self, 'hand_source', 'vr') != 'pico_head')}
+                    'started': bool(self.online() and self.hb.get('START'))}
 
     def start(self):
         with self.lock:
@@ -449,6 +447,9 @@ class Upstream:
                 return False, 'Already following'
             if getattr(self, 'pose_waiting', False):
                 return False, 'Already waiting for the matching pose; STOP cancels'
+            if (getattr(self, 'hand_source', 'vr') in ('vr', 'wuji') and head_settings(ROOT).get('enabled') and
+                    not hb.get('HEAD_READY')):
+                return False, 'Enter the headset browser XR view and enable live head tracking before START'
             if getattr(self, 'hand_source', 'vr') in NATIVE_SOURCES and not self.tracker_status()['ready']:
                 return False, self.tracker_status()['message']
             if getattr(self, 'hand_source', 'vr') in POSE_MATCH_SOURCES:
@@ -620,6 +621,9 @@ class Upstream:
             state = ('Arms prepared · save matching pose' if not pose_match.get('calibrated') else
                      'Arms prepared · '+pose_match['message'] if not pose_match.get('robot_matches') else
                      'Arms prepared · press Start pose check')
+        if (phase == 'ready' and getattr(self, 'hand_source', 'vr') in ('vr', 'wuji') and
+                head_settings(ROOT).get('enabled') and not hb.get('HEAD_READY')):
+            state, phase = 'Enter the headset browser XR view for live head tracking', 'head_wait'
         if getattr(self, 'hand_source', 'vr') == 'pico_head' and phase == 'init':
             state = 'Preparing head tracking; arms and fingers are not following'
         if getattr(self, 'hand_source', 'vr') == 'pico_head' and phase == 'stopping':
@@ -632,6 +636,7 @@ class Upstream:
                 'pico_tracker': tracker,
                 'head_follow': dict(head_settings(ROOT), enabled=getattr(self, 'hand_source', 'vr') == 'pico_head' or bool(head_settings(ROOT).get('enabled')),
                                     active=bool(hb.get('HEAD_FOLLOW') and hb.get('START')),
+                                    supported=True, source='browser' if getattr(self, 'hand_source', 'vr') in ('vr', 'wuji') else 'native_pico',
                                     live=bool(hb.get('HEAD_LIVE')), target=hb.get('HEAD_TARGET')),
                 'fsm': fsm, 'fsm_busy': self.fsm.busy, 'fsm_msg': self.fsm.msg, 'fsm_error': self.fsm.error,
                 'walking': self.fsm.walking_status(),
@@ -671,7 +676,7 @@ class Recorder:
             with (LOGDIR / 'recorder.log').open('a') as log:
                 self.process = subprocess.Popen(
                     [sys.executable, str(RECORDER), '--out', str(self.dir), '--network-interface', self.interface,
-                     '--camera-streams'], env=environment(),
+                     '--camera-streams', '--head-camera'], env=environment(),
                     stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
             return True, f'Recording take {self.takes} → {self.dir.name}'
 
@@ -687,7 +692,8 @@ class Recorder:
             return True, f'Saved {self.dir.name}'
 
     def status(self):
-        info = {'recording': self.running(), 'dir': self.dir.name if self.dir else '', 'takes': self.takes}
+        info = {'recording': self.running(), 'dir': self.dir.name if self.dir else '', 'takes': self.takes,
+                'head_video_supported': True, 'head_video_file': 'head.mp4'}
         try:
             info.update(json.loads((self.dir / 'status.json').read_text()))
             info['dir'] = self.dir.name
@@ -712,7 +718,7 @@ PAGE ='''<!doctype html><html lang="en"><meta charset="utf-8">
 <header class="topbar"><div><div class="eyebrow">UNITREE H2</div><h1>Teleoperation</h1></div><span class="top-meta">PICO · Quest · Wuji</span></header>
 <section class="control-bar" aria-label="Teleoperation controls"><div class="status-row"><div id="state" role="status" aria-live="polite">Connecting…</div><div id="fsm">Reading robot mode…</div></div><div class="primary-actions"><button id="launch" disabled onclick="launchConfirm()"><span class="step">1</span> Prepare arms</button><button id="start" disabled onclick="send('start')"><span class="step">2</span> Start following</button><button id="stop" disabled onclick="send('stop')">Stop following</button></div><div id="msg" role="status" aria-live="polite"></div><small class="control-note">Start captures your neutral pose. Stop ends arm, finger and head following; use the remote for walking.</small></section>
 <section class="panel" id="pose-match" hidden aria-label="Start pose matching"><div class="panel-heading"><h2>Start pose</h2><button id="pose-save" onclick="saveMatchingPose()" disabled>Save matching pose</button></div><div id="pose-state" role="status" aria-live="polite"></div><div id="pose-left"></div><div id="pose-right"></div><progress id="pose-progress" max="1" value="0" hidden style="width:100%;margin-top:10px" aria-label="Continuous pose match"></progress><small>First use: Prepare arms, physically match H2’s wrist positions and angles, look forward, then Save matching pose. Start pose check waits for a steady match before following. Save again for a different wearer or tracker mounting. This checks wrists; elbow placement is inferred.</small></section>
-<main><div class="workspace"><section class="panel pov-panel"><div class="panel-heading"><h2>Robot POV</h2><span class="eyebrow">HEAD CAMERA · LEFT EYE</span></div><div id="head-camera-state">Waiting for head camera…</div><img id="head-camera-image" alt="H2 head camera left eye"  hidden><div class="head-toolbar"><label class="switch-label"><input id="head-follow" type="checkbox" onchange="setHeadFollow()"> Follow headset</label><button id="head-recenter" onclick="send('head-recenter')" disabled>Recenter</button></div><div id="head-follow-state" class="detail-status"></div><details class="help"><summary>Set up the headset view</summary><small>Use native PICO wrist trackers + Wuji. Look forward at START; yaw and pitch follow your headset. Recenter keeps the current robot neck pose. STOP ends following. In PICO XRoboToolkit: Remote Vision → ZEDMINI → Listen → this laptop's IP. This uses the H2 left-eye camera for both eyes. Head-camera recording is not enabled.</small></details><div id="head-video-state"></div></section><section class="panel input-setup"><div class="panel-heading"><h2>Inputs</h2><span class="eyebrow">CONNECT & SELECT</span></div>
+<main><div class="workspace"><section class="panel pov-panel"><div class="panel-heading"><h2>Robot POV</h2><span class="eyebrow">HEAD CAMERA · LEFT EYE</span></div><div id="head-camera-state">Waiting for head camera…</div><img id="head-camera-image" alt="H2 head camera left eye"  hidden><div class="head-toolbar"><label class="switch-label"><input id="head-follow" type="checkbox" onchange="setHeadFollow()"> Follow headset</label><button id="head-recenter" onclick="send('head-recenter')" disabled>Recenter</button></div><div id="head-follow-state" class="detail-status"></div><details class="help"><summary>Set up the headset view</summary><small>Select Follow headset before preparing. Browser modes use the headset browser XR view; native PICO modes use Head + Send in XRoboToolkit. Look forward at START; yaw and pitch follow your headset. Recenter keeps the current robot neck pose. STOP ends following. In PICO XRoboToolkit: Remote Vision → ZEDMINI → Listen → this laptop's IP. This uses the H2 left-eye camera for both eyes. Recording includes the head camera as head.mp4.</small></details><div id="head-video-state"></div></section><section class="panel input-setup"><div class="panel-heading"><h2>Inputs</h2><span class="eyebrow">CONNECT & SELECT</span></div>
 <label for="hand-source"><strong>Control mode</strong></label>
 <select id="hand-source" onchange="setHandSource()" style="display:block;width:100%;font-size:20px;padding:12px;margin:12px 0" disabled>
 <option value="pico_head">PICO head only · camera + neck</option>
@@ -767,9 +773,9 @@ PAGE ='''<!doctype html><html lang="en"><meta charset="utf-8">
 <button id="grasp-release" disabled onclick="send('grasp-release')">Release right hand</button>
 <small>First use: test the grasp with the bag supported before carrying it. This preset has not been physically validated; holding force and bag retention are not measured. Dashboard STOP ends Quest arm teleop; use Release above to open a standalone grasp.</small>
 </section></details>
-<details class="panel"><summary>Recording<span>Wrist cameras & joints</span></summary><label style="display:block;margin:18px 0 8px"><input id="auto-rec" type="checkbox" disabled onchange="setAutoRecording()"> Automatically record wrist cameras + joints with Quest START</label>
+<details class="panel"><summary>Recording<span>Head & wrist video</span></summary><label style="display:block;margin:18px 0 8px"><input id="auto-rec" type="checkbox" disabled onchange="setAutoRecording()"> Automatically record head + wrist video when following starts</label>
 <div id="auto-rec-state" style="font-size:14px;margin-bottom:12px" aria-live="polite">Reading automatic recording settings…</div>
-<button id="rec" disabled onclick="toggleRec()">● REC cameras + joints</button>
+<button id="rec" disabled onclick="toggleRec()">● REC head + wrist video</button>
 <div id="recinfo"></div>
 </details></div>
 <details class="panel help"><summary>Operating notes & browser link</summary><small>For standing with arm teleop: prepare FSM 4 with support, plant both feet, then enable arm-compatible motion mode (703). FSM 601 does not accept arm teleop. Keep the gantry attached until standing is stable. The displayed mode does not verify physical balance.<br>
@@ -777,7 +783,7 @@ Flow: LAUNCH → operator puts on the Quest, hands down → START → after the 
 STOP ends arm teleop and leaves the body mode selected; the hands keep their last pose. Use the Unitree remote for body control.<br>Quest URL: <a id="quest-link" target="_blank" rel="noopener">Open Vuer</a></small>
 </details>
 <details class="panel"><summary>Session log</summary><small id="logfile"></small><pre id="log"></pre></details>
-</main><footer>H2 control · Robot POV and wrist feeds are live views. Head-camera recording is not enabled.</footer></div>
+</main><footer>H2 control · Robot POV and wrist feeds are live views. Recording includes the head camera as head.mp4.</footer></div>
 <script>
 const questHost=window.location.hostname;
 document.querySelector('#native-service-ip').textContent=questHost;
@@ -800,12 +806,12 @@ async function refresh(){
     renderHandGains(s.hand_gains);
     renderGrasp(s.right_grasp,s.running||!!(s.wuji&&s.wuji.active),s.hand_gains);
     renderCamera(s.camera);
-    const ho=s.hand_source==='pico_head',hf=s.head_follow||{},hn=ho||s.hand_source==='pico_wuji'||s.hand_source==='pico_dual_wuji'||s.hand_source==='pico_tracker_hands';
+    const ho=s.hand_source==='pico_head',hf=s.head_follow||{},hn=true;
     $('#head-follow').checked=ho||!!hf.enabled&&hn;$('#head-follow').disabled=s.running||!hn||ho;
     $('#launch').textContent=ho?'Prepare head tracking':'Prepare arms';
     $('#start').textContent=ho?'Start head following':s.pose_match&&s.pose_match.enabled?'Start pose check':'Start following';
     $('#head-recenter').disabled=!(hf.active&&phase==='following');
-    $('#head-follow-state').textContent=!hn?'Head following uses a native PICO mode':hf.active?(hf.live?'Head following active':'Head input unavailable; holding neck target'):hf.enabled?'Head following selected for the next START':'Head following off';
+    $('#head-follow-state').textContent=hf.active?(hf.live?'Head following active':'Head input unavailable; holding neck target'):hf.enabled?'Head following selected for the next START':'Head following off';
     const hv=s.head_video;
     $('#head-video-state').textContent=hv?(hv.streaming?'PICO POV streaming · '+hv.fps+' fps':hv.error?'PICO POV: '+hv.error:'PICO POV ready — select Listen in XRoboToolkit'):'PICO POV bridge unavailable';
     renderWuji(s);
@@ -941,7 +947,7 @@ function renderRec(r){
   if(a&&!autoRecSaving)$('#auto-rec').checked=a.enabled;
   $('#auto-rec-state').textContent=a?a.message+' Long sessions use consecutive 20-minute takes. STOP REC pauses automatic recording for the current session.':'Automatic recording unavailable';
   recOn=!!r.recording;$('#rec').disabled=busy;$('#rec').className=recOn?'on':'';
-  $('#rec').textContent=recOn?'■ STOP REC':'● REC cameras + joints';
+  $('#rec').textContent=recOn?'■ STOP REC':'● REC head + wrist video';
   const c=r.cams||{},j=r.joints||{},rt=j.rates||{},t=Math.floor(r.elapsed||0);
   const cams=Object.keys(c).map(k=>k+' '+(c[k].error?'⚠ '+c[k].error:c[k].fps+' fps')).join(' · ');
   const mb=Object.values(c).reduce((a,x)=>a+(x.mb||0),0);

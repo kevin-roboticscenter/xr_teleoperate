@@ -1,4 +1,4 @@
-"""Automatic wrist-camera/joint recording for Quest sessions; no robot commands."""
+"""Automatic camera recording for teleop sessions; no robot commands."""
 import json
 import os
 from pathlib import Path
@@ -36,13 +36,13 @@ class AutoRecording:
         elif not self.enabled:
             message = 'Auto REC is off. Manual REC is available.'
         elif self.paused:
-            message = 'Auto REC paused for this session; resumes at the next Quest START.'
+            message = 'Auto REC paused for this session; resumes when the next session starts following.'
         elif self.owned:
-            message = 'Auto REC: wrist cameras + joints; saves when teleop exits.'
+            message = 'Auto REC: head + wrist video; saves when teleop exits.'
         elif self.session:
             message = 'Auto REC: using the existing manual recording; manual STOP REC ends it.'
         else:
-            message = 'Auto REC enabled: starts with Quest START, saves when teleop exits.'
+            message = 'Auto REC enabled: starts when following begins, saves when teleop exits.'
         self._status = {'enabled': self.enabled, 'session_active': self.session is not None,
                         'owned': self.owned, 'paused': self.paused, 'error': self.error,
                         'message': message}

@@ -42,7 +42,7 @@ def command(hand_source='vr'):
         return [sys.executable, str(ROOT / 'pico_tracker/arm_teleop.py'),
                 *(['--both-arms'] if hand_source in DUAL_TRACKER_SOURCES else []),
                 *(['--pico-hands'] if hand_source == PICO_HAND_SOURCE else [])]
-    return [sys.executable, str(UPSTREAM / 'teleop/teleop_hand_and_arm.py'),
+    return [sys.executable, str(ROOT / 'head_camera/browser_teleop.py'),
             '--arm', 'H2', *(['--ee', 'dex5'] if hand_source == 'vr' else []), '--input-mode', 'hand',
             '--display-mode', display_mode(), '--motion', '--headless', '--ipc',
             '--img-server-ip', '127.0.0.1', '--network-interface',
