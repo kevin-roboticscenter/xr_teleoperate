@@ -21,6 +21,7 @@ from urllib.parse import urlsplit, parse_qs
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 import h2_link
+from pico_tracker.controllers import CONTROLLER_SOURCE
 from wuji_glove.calibration import CalibrationManager, CalibrationError
 
 
@@ -114,7 +115,7 @@ class GloveBridges:
             connection.request('GET', '/api/status')
             response = connection.getresponse()
             if response.status != 200: raise OSError('H2 status unavailable')
-            self.set_dual(json.loads(response.read())['hand_source'] == 'pico_dual_wuji')
+            self.set_dual(json.loads(response.read())['hand_source'] in ('pico_dual_wuji', CONTROLLER_SOURCE))
         finally:
             connection.close()
         for side in (('left', 'right') if self.dual else ('left',)):
@@ -167,7 +168,7 @@ class TrackerBridge(GloveBridge):
                                               stdout=log, stderr=log, start_new_session=True)
                 self.source.stdout.close()
             self.error = ''
-            return True, 'PICO input connected; native app needs Head + Object Tracking + Send'
+            return True, 'PICO input connected; enable Head + Send and the selected Controller or Object Tracking input'
 
 
 def require_robot_idle():
@@ -227,8 +228,8 @@ def handler(bridge, tracker=None, video=None, calibration=None):
                 if self.command == 'POST' and self.path == '/api/hand-source' and response.status == 200:
                     if json.loads(body)['source'] in ('vr', 'pico_head', 'pico_tracker_hands'): bridge.close()
                     if callable(getattr(bridge, 'set_dual', None)):
-                        bridge.set_dual(json.loads(body)['source'] == 'pico_dual_wuji')
-                    if tracker and json.loads(body)['source'] not in ('pico_wuji', 'pico_dual_wuji', 'pico_head', 'pico_tracker_hands'): tracker.close()
+                        bridge.set_dual(json.loads(body)['source'] in ('pico_dual_wuji', CONTROLLER_SOURCE))
+                    if tracker and json.loads(body)['source'] not in ('pico_wuji', 'pico_dual_wuji', CONTROLLER_SOURCE, 'pico_head', 'pico_tracker_hands'): tracker.close()
                 if 300 <= response.status < 400:
                     self.send_response(response.status)
                     self.send_header('Location', response.getheader('Location', '/h2-teleop'))

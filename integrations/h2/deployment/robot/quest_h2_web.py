@@ -37,7 +37,8 @@ import uuid
 import zmq
 
 from quest_h2_teleop import (GAIN_SETTINGS_PATH, ROOT, UPSTREAM, command, environment,
-                            PICO_HAND_SOURCE, NATIVE_SOURCES)
+                            PICO_HAND_SOURCE, NATIVE_SOURCES, CONTROLLER_SOURCE,
+                            DUAL_WUJI_SOURCES, WUJI_SOURCES)
 from pico_tracker.input import TrackerInput
 from pico_tracker.pose_match import MatchDwell, matching_enabled
 from head_camera.head_follow import settings as head_settings
@@ -52,7 +53,7 @@ PAGE_PATH = '/h2-teleop'   # '/' redirects here; the browser supplies the Wi-Fi 
 # Matches Unitree's example/h2/high_level/h2_arm_sdk_dds_example.py.
 TELEOP_FSM_IDS = (4, 703)
 HAND_SOURCE_PATH = GAIN_SETTINGS_PATH.parent / 'hand_source.json'
-POSE_MATCH_SOURCES = ('pico_wuji', 'pico_dual_wuji', PICO_HAND_SOURCE)
+POSE_MATCH_SOURCES = ('pico_wuji', *DUAL_WUJI_SOURCES, PICO_HAND_SOURCE)
 
 
 class Fsm:
@@ -321,7 +322,7 @@ class Upstream:
             if self.running() or (glove is not None and glove.status()['active']):
                 return False, 'STOP before changing the hand source'
             if glove is not None and callable(getattr(glove, 'set_dual', None)):
-                glove.set_dual(value == 'pico_dual_wuji')
+                glove.set_dual(value in DUAL_WUJI_SOURCES)
             HAND_SOURCE_PATH.parent.mkdir(parents=True, exist_ok=True)
             temporary = HAND_SOURCE_PATH.with_suffix('.tmp')
             temporary.write_text(json.dumps({'source': value}) + '\n')
@@ -331,6 +332,8 @@ class Upstream:
                 return True, 'Both PICO wrist trackers + PICO optical fingers selected; Wuji gloves are not required'
             if value == 'pico_head':
                 return True, 'PICO camera + head-only mode selected; gloves and wrist trackers are not required'
+            if value == CONTROLLER_SOURCE:
+                return True, 'Both PICO controllers drive arms/wrists; both Wuji gloves drive fingers'
             if value == 'pico_dual_wuji':
                 return True, 'Both PICO wrist trackers + both Wuji gloves selected'
             if value == 'pico_wuji':
@@ -360,6 +363,8 @@ class Upstream:
     def tracker_status(self):
         tracker = getattr(self, 'tracker', None)
         if tracker is None: return None
+        if getattr(self, 'hand_source', 'vr') == CONTROLLER_SOURCE:
+            return tracker.status(both=True, controllers=True)
         if getattr(self, 'hand_source', 'vr') == PICO_HAND_SOURCE:
             return tracker.status(both=True, optical_hands=True)
         return tracker.status(head_only=True) if getattr(self, 'hand_source', 'vr') == 'pico_head' else tracker.status(both=True) if self.hand_source == 'pico_dual_wuji' else tracker.status()
@@ -377,9 +382,9 @@ class Upstream:
             if glove is not None and callable(getattr(glove, 'conflict', None)):
                 conflict = glove.conflict()
                 if conflict: return False, conflict
-            if getattr(self, 'hand_source', 'vr') in ('wuji', 'pico_wuji', 'pico_dual_wuji') and (
+            if getattr(self, 'hand_source', 'vr') in WUJI_SOURCES and (
                     glove is None or not glove.status()['connected']):
-                return False, 'Connect both Wuji gloves before LAUNCH' if self.hand_source == 'pico_dual_wuji' else 'Connect the left Wuji glove before LAUNCH'
+                return False, 'Connect both Wuji gloves before LAUNCH' if self.hand_source in DUAL_WUJI_SOURCES else 'Connect the left Wuji glove before LAUNCH'
             if getattr(self, 'hand_source', 'vr') in NATIVE_SOURCES and not self.tracker_status()['ready']:
                 return False, self.tracker_status()['message']
             if self.fsm.busy or self.fsm.current() not in TELEOP_FSM_IDS:
@@ -468,7 +473,7 @@ class Upstream:
     def _begin_following(self):
         """Called with the controller lock held, after the match when required."""
         glove = getattr(self, 'wuji', None)
-        uses_glove = getattr(self, 'hand_source', 'vr') in ('wuji', 'pico_wuji', 'pico_dual_wuji')
+        uses_glove = getattr(self, 'hand_source', 'vr') in WUJI_SOURCES
         if uses_glove:
             if glove is None: return False, 'Wuji input unavailable'
             ok, msg = glove.start()
@@ -600,7 +605,7 @@ class Upstream:
             state, phase = 'READY: press START when the operator is in position', 'ready'
         else:
             state, phase = ('Initializing… (arms to zero; Wuji waits for START)' if
-                            getattr(self, 'hand_source', 'vr') in ('wuji', 'pico_wuji', 'pico_dual_wuji') else
+                            getattr(self, 'hand_source', 'vr') in WUJI_SOURCES else
                             'Initializing… (arms to zero, hands opening)'), 'init'
         log = ''
         if self.log_path and self.log_path.exists():
@@ -615,9 +620,9 @@ class Upstream:
         pose_match = self.pose_match_status(hb)
         if phase == 'ready' and getattr(self, 'hand_source', 'vr') in NATIVE_SOURCES and tracker and not tracker['ready']:
             state, phase = tracker['message'], 'tracker_wait'
-        if phase == 'following' and hb.get('INPUT') == 'pico_tracker' and not hb.get('TRACKER_LIVE'):
+        if phase == 'following' and hb.get('INPUT') in ('pico_tracker', 'pico_controllers') and not hb.get('TRACKER_LIVE'):
             state = hb.get('INPUT_MESSAGE', 'Tracker input unavailable; arms holding last target')
-        if phase in ('ready', 'tracker_wait') and getattr(self, 'hand_source', 'vr') in ('wuji', 'pico_wuji', 'pico_dual_wuji') and feedback and not feedback['ready']:
+        if phase in ('ready', 'tracker_wait') and getattr(self, 'hand_source', 'vr') in WUJI_SOURCES and feedback and not feedback['ready']:
             state, phase = feedback['message'] + ' · arms initialized; resolve hand feedback before START', 'hand_fault'
         if phase in ('ready', 'tracker_wait', 'hand_fault') and pose_match['waiting']:
             state, phase = 'Waiting for pose match · '+pose_match['message'], 'matching'
@@ -730,6 +735,7 @@ PAGE ='''<!doctype html><html lang="en"><meta charset="utf-8">
 <option value="wuji">Browser arms + Wuji left hand</option>
 <option value="pico_wuji">PICO left wrist tracker + Wuji left hand</option>
 <option value="pico_dual_wuji">PICO wrist trackers + both Wuji gloves</option>
+<option value="pico_controller_wuji">PICO controllers + both Wuji gloves</option>
 <option value="pico_tracker_hands">PICO wrist trackers + PICO fingers</option>
 </select>
 <button id="wuji-connect" onclick="send('wuji/connect')" style="font-size:20px;padding:14px;background:#1e40af" disabled>Connect Wuji glove</button>
@@ -750,7 +756,7 @@ PAGE ='''<!doctype html><html lang="en"><meta charset="utf-8">
 <select id="right-tracker-sn" onchange="selectTracker('right')" style="width:100%;font-size:18px;padding:10px"></select>
 </div>
 </details><div id="tracker-state" role="status"></div>
-<details class="help" id="tracker-setup-help"><summary>Headset & tracker setup</summary><small>XRoboToolkit PC Service IP: <span id="native-service-ip"></span>. Enable Head, Object Tracking, and Send. Mount each selected tracker rigidly on the back of its hand. At START, look forward and match your arm pose to the robot. That pose becomes the reference. Two-glove mode follows both arms and wrists. Left-only mode holds the right arm.</small></details>
+<details class="help" id="tracker-setup-help"><summary>Headset & input setup</summary><small>XRoboToolkit PC Service IP: <span id="native-service-ip"></span>. <span id="tracker-mode-instructions">Enable Head, Object Tracking, and Send. Mount each selected tracker rigidly on the back of its hand. At START, look forward and match your arm pose to the robot. That pose becomes the reference. Two-glove mode follows both arms and wrists. Left-only mode holds the right arm.</span></small></details>
 </div>
 <small id="source-help">Wuji currently uses the calibrated left glove; right fingers keep their last pose. STOP ends arm and Wuji following.</small>
 </section></div>
@@ -844,7 +850,8 @@ function saveMatchingPose(){
 }
 function renderWuji(s){
   const w=s.wuji||{},b=s.glove_bridge||{};
-  const dual=s.hand_source==='pico_dual_wuji';
+  const controllers=s.hand_source==='pico_controller_wuji';
+  const dual=s.hand_source==='pico_dual_wuji'||controllers;
   const optical=s.hand_source==='pico_tracker_hands';
   const usesGlove=s.hand_source==='wuji'||s.hand_source==='pico_wuji'||dual;
   $('#hand-source').value=s.hand_source||'vr';
@@ -862,8 +869,9 @@ function renderWuji(s){
   if(dual){const hands=w.hands||{};$('#wuji-state').textContent=(b.error||w.error||'')+' '+['left','right'].map(side=>{const h=hands[side]||{},f=h.hand_feedback||{};return side+': '+(!f.ready?(f.message||'waiting for motor feedback'):!h.connected?'connect calibrated glove':h.active?'following':'ready')}).join(' · ')}
   const headOnly=s.hand_source==='pico_head',native=headOnly||s.hand_source==='pico_wuji'||dual||optical,t=s.pico_tracker||{},p=s.tracker_bridge||{};
   if(optical){const hands=(t.hands||{}).sides||{};$('#wuji-state').textContent='PICO fingers · '+['left','right'].map(side=>side+': '+(hands[side]?'tracked':'show hand to headset')).join(' · ')}
-  $('#tracker-connect').textContent=headOnly?'Connect PICO headset':'Connect PICO tracker input';
-  $('#wuji-state').hidden=headOnly;$('#tracker-assignments').hidden=headOnly;$('#tracker-setup-help').hidden=headOnly;
+  $('#tracker-connect').textContent=headOnly?'Connect PICO headset':controllers?'Connect PICO controller input':'Connect PICO tracker input';
+  $('#wuji-state').hidden=headOnly;$('#tracker-assignments').hidden=headOnly||controllers;$('#tracker-setup-help').hidden=headOnly;
+  $('#tracker-mode-instructions').textContent=controllers?'Turn on both PICO controllers. Enable Head, Controller, and Send in XRoboToolkit. The left/right controller roles are automatic; wrist trackers and optical hand tracking are not required. Look forward and hold the controllers in your neutral arm pose at START. Wuji gloves control finger positions.':'Enable Head, Object Tracking, and Send. Mount each selected tracker rigidly on the back of its hand. At START, look forward and match your arm pose to the robot. That pose becomes the reference. Two-glove mode follows both arms and wrists. Left-only mode holds the right arm.';
   $('#tracker-controls').hidden=!native;
   $('#tracker-connect').disabled=busy||s.running||p.running;
   $('#tracker-state').textContent=(p.error||t.message||'Tracker status unavailable')+(t.connected?' · '+t.sample_hz+' Hz':'');
@@ -874,7 +882,8 @@ function renderWuji(s){
   const rightSelect=$('#right-tracker-sn');
   if(JSON.stringify(serials)!==rightSelect.dataset.serials){rightSelect.replaceChildren(new Option('Choose right tracker',''),...serials.map(sn=>new Option(sn,sn)));rightSelect.dataset.serials=JSON.stringify(serials)}
   rightSelect.value=t.right_sn||'';rightSelect.disabled=busy||s.running;
-  $('#source-help').textContent=headOnly?'Head + Send in XRoboToolkit. Prepare head tracking → look forward → Start head following. Arms hold their current pose; finger following is off. Stop ends the test.':optical?'XRoboToolkit: Head + Hand + Object Tracking + Send. Connect PICO tracker input and show both hands. Trackers drive arms/wrists; optical hand tracking drives fingers. Prepare arms → Save matching pose on first use → Start pose check → match both wrists and look forward until following starts. Wuji gloves are not required.':native?'Connect tracker(s) + calibrated glove(s) → Prepare arms → Save matching pose on first use → Start pose check → hold the matching wrist pose until following starts. Stop ends arms, fingers and head following.':'Browser modes: Connect glove if selected → LAUNCH → enter headset Pass-through → START. Wuji controls left fingers; right fingers keep their last pose.';
+  const startSteps=s.pose_match&&s.pose_match.enabled?'Prepare arms → Save matching pose on first use → Start pose check → hold the matching wrist pose.':'Prepare arms → look forward in your neutral arm pose → Start following.';
+  $('#source-help').textContent=headOnly?'Head + Send in XRoboToolkit. Prepare head tracking → look forward → Start head following. Arms hold their current pose; finger following is off. Stop ends the test.':controllers?'XRoboToolkit: Head + Controller + Send. Connect PICO controller input + both calibrated Wuji gloves. Controllers drive arms/wrists; gloves drive fingers. '+startSteps+' Stop ends arms, fingers and head following.':optical?'XRoboToolkit: Head + Hand + Object Tracking + Send. Connect PICO tracker input and show both hands. Trackers drive arms/wrists; optical hand tracking drives fingers. '+startSteps+' Wuji gloves are not required.':native?'Connect tracker(s) + calibrated glove(s). '+startSteps+' Stop ends arms, fingers and head following.':'Browser modes: Connect glove if selected → LAUNCH → enter headset Pass-through → START. Wuji controls left fingers; right fingers keep their last pose.';
 }
 async function selectTracker(side='left'){
   busy=true;
@@ -1115,7 +1124,7 @@ if __name__ == '__main__':
     from quest_wuji import Dex5Feedback, WujiHand, WujiHands
     up.wuji = WujiHands(*[WujiHand(ROOT, sys.executable, args.network_interface,
                                  feedback=Dex5Feedback(ROOT, side), side=side)
-                         for side in ('left', 'right')], dual=up.hand_source == 'pico_dual_wuji')
+                         for side in ('left', 'right')], dual=up.hand_source in DUAL_WUJI_SOURCES)
     from quest_right_grasp import GraspManager
     up.grasp = GraspManager(up.gain_store, args.network_interface)
     from quest_camera_service import CameraService

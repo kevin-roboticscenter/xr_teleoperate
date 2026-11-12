@@ -87,8 +87,9 @@ def valid_reference_pose(value):
 
 
 class PoseReference:
-    def __init__(self, root):
-        self.path = Path(root)/'config/pico_pose_match.json'
+    def __init__(self, root, controllers=False):
+        name = 'pico_controller_pose_match.json' if controllers else 'pico_pose_match.json'
+        self.path = Path(root)/'config'/name
 
     def save(self, frame, robot_poses, config, sides):
         if not frame or not frame.get('session'):

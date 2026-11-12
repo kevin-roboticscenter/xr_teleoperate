@@ -6,6 +6,7 @@ import time
 
 from .geometry import pose_valid
 from .hands import hands_status
+from .controllers import controller_config, controller_frame
 
 RUNTIME = Path('/dev/shm') / f'h2-pico-tracker-{os.getuid()}'
 FRAME_PATH = RUNTIME / 'latest.json'
@@ -27,7 +28,9 @@ class TrackerInput:
         self.root, self.frame_path = Path(root), frame_path
         self.config_path = self.root / 'config/pico_tracker.json'
 
-    def config(self):
+    def config(self, controllers=False):
+        if controllers:
+            return controller_config()
         try:
             return json.loads(self.config_path.read_text())
         except FileNotFoundError:
@@ -51,9 +54,13 @@ class TrackerInput:
         return True, (f'{side.title()} wrist tracker selected; START captures the neutral arm pose' if serial else
                       f'{side.title()} wrist tracker assignment cleared')
 
-    def status(self, both=False, head_only=False, optical_hands=False):
+    def frame(self, controllers=False):
         frame = read_frame(self.frame_path)
-        config = self.config()
+        return controller_frame(frame) if controllers else frame
+
+    def status(self, both=False, head_only=False, optical_hands=False, controllers=False):
+        frame = self.frame(controllers=controllers)
+        config = self.config(controllers=controllers)
         serial = config.get('left_sn', '')
         right_serial = config.get('right_sn', '')
         sides = () if head_only else ('left', 'right') if both else ('left',)
@@ -66,7 +73,11 @@ class TrackerInput:
         fingers = hands_status(frame)
         ready = bool(frame and not missing and not stale and head_ready and not duplicate and
                      (not optical_hands or fingers['ready']))
-        message = ('Tracker input disconnected' if not frame else
+        message = ('PICO controller input disconnected' if controllers and not frame else
+                   f'Enable Controller + Send in XRoboToolkit and turn on the {missing[0]} controller' if controllers and missing else
+                   f'Move the {stale[0]} controller to verify its pose is updating' if controllers and stale and head_ready else
+                   'Both PICO controllers ready; START captures neutral' if controllers and ready else
+                   'Tracker input disconnected' if not frame else
                    'Use a different tracker serial for each wrist' if duplicate else
                    f'Choose the {missing[0]} wrist tracker' if missing else
                    'Enable Head in XRoboToolkit' if not head_ready else
@@ -76,6 +87,7 @@ class TrackerInput:
                    ('Both wrist trackers ready; START captures neutral' if both else
                     'Left wrist tracker ready; START captures neutral'))
         return {'connected': bool(frame), 'ready': ready, 'left_sn': serial,
+                'input_source': 'controllers' if controllers else 'trackers',
                 'right_sn': right_serial, 'required_sides': list(sides),
                 'serial_numbers': list(trackers), 'trackers': trackers,
                 'pose_age_ms': ages, 'head_ready': head_ready, 'hands': fingers, 'message': message,

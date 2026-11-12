@@ -79,6 +79,10 @@ when the operator selects a glove/profile/hand and starts it on that page.
 - Browser arms with Wuji left fingers.
 - Native PICO left wrist tracker with a Wuji left glove.
 - Native PICO both wrist trackers with both Wuji gloves.
+- Native PICO controllers with both Wuji gloves; see
+  [controller setup](deployment/PICO_CONTROLLERS_WUJI.md). Controller positions
+  and rotations drive arms/wrists; gloves drive fingers. Physical validation
+  is pending.
 - Native PICO both wrist trackers with PICO optical finger tracking, without
   Wuji gloves (installed while teleop was idle; physical validation pending).
 - Native PICO head-only following, holding the measured arm posture and

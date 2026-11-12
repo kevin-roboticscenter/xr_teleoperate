@@ -15,6 +15,7 @@ import uuid
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from pico_tracker.geometry import pose_valid
 from pico_tracker.hands import read_hands
+from pico_tracker.controllers import read_controllers
 
 
 def main():
@@ -32,11 +33,13 @@ def main():
             tick = time.monotonic()
             packet_stamp = xrt.get_time_stamp_ns()
             motion_stamp = xrt.get_motion_timestamp_ns()
-            stamp = motion_stamp or packet_stamp
+            # Controller/head packets must continue when Motion Tracker time
+            # is absent or stops advancing. Individual tracker ages stay visible.
+            stamp = packet_stamp or motion_stamp
             if stamp and stamp != last_stamp:
                 poses = xrt.get_motion_tracker_pose()
                 serials = xrt.get_motion_tracker_serial_numbers()
-                if stamp == (xrt.get_motion_timestamp_ns() or xrt.get_time_stamp_ns()):
+                if stamp == (xrt.get_time_stamp_ns() or xrt.get_motion_timestamp_ns()):
                     trackers = {sn: list(pose) for sn, pose in zip(serials, poses)
                                 if sn and pose_valid(pose)}
                     for sn, pose in trackers.items():
@@ -47,12 +50,13 @@ def main():
                              'session': session, 'seq': sequence, 'trackers': trackers,
                              'head_pose': list(xrt.get_headset_pose()),
                              'motion_timestamp_ns': motion_stamp, 'packet_timestamp_ns': packet_stamp,
-                             'timestamp_source': 'motion' if motion_stamp else 'packet',
+                             'timestamp_source': 'packet' if packet_stamp else 'motion',
                              'sample_at_unix_ns': time.time_ns(),
                              'sample_mono': tick,
                              'sample_hz': round(1/max(tick-last_emit, 1e-6), 1),
                              'pose_age_ms': {sn: round((tick-changed[sn])*1000, 1) for sn in trackers}}
                     frame['hands'] = read_hands(xrt)
+                    frame['controllers'] = read_controllers(xrt, previous, changed, tick)
                     data = (json.dumps(frame, separators=(',', ':'), allow_nan=False)+'\n').encode()
                     if len(data) <= 4096:
                         try:

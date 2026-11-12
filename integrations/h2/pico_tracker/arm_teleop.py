@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from quest_h2_teleop import UPSTREAM, environment
 from pico_tracker.geometry import IncrementalWrist, heading_basis, pose_valid
-from pico_tracker.input import read_frame, TrackerInput
+from pico_tracker.input import TrackerInput
 from pico_tracker.hands import OpticalFingers, hands_status
 from pico_tracker.pose_match import PoseReference, matching_enabled
 from head_camera.head_follow import HeadPoseMapper, HeadCommandPublisher, settings as head_settings
@@ -30,7 +30,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--both-arms', action='store_true')
     parser.add_argument('--pico-hands', action='store_true')
+    parser.add_argument('--controllers', action='store_true')
     args = parser.parse_args()
+    if args.controllers and (not args.both_arms or args.pico_hands):
+        parser.error('Controller input requires --both-arms and dashboard-owned Wuji fingers')
     # Importing this module for tests never initializes DDS or a motor controller.
     sys.path[:0] = environment()['PYTHONPATH'].split(os.pathsep)
     os.chdir(UPSTREAM / 'teleop')
@@ -42,15 +45,18 @@ def main():
     from teleop.utils.ipc import IPC_Server
 
     inputs = TrackerInput(ROOT)
-    reference = PoseReference(ROOT)
-    config = inputs.config()
+    reference = PoseReference(ROOT, controllers=args.controllers)
+    config = inputs.config(controllers=args.controllers)
+    read_wrist_frame = lambda: inputs.frame(controllers=args.controllers)
+    input_label = 'PICO controllers' if args.controllers else 'wrist trackers'
     sides = ('left', 'right') if args.both_arms else ('left',)
     serials = {side: config.get(side+'_sn') for side in sides}
-    readiness = inputs.status(both=args.both_arms, optical_hands=args.pico_hands)
+    readiness = inputs.status(both=args.both_arms, optical_hands=args.pico_hands,
+                              controllers=args.controllers)
     if not readiness['ready']:
         raise RuntimeError(readiness['message'])
     state = {'START': False, 'STOP': False, 'READY': False, 'RECORD_RUNNING': False,
-             'INPUT': 'pico_tracker', 'LEFT_SN': serials['left'],
+             'INPUT': 'pico_controllers' if args.controllers else 'pico_tracker', 'LEFT_SN': serials['left'],
              'RIGHT_SN': serials.get('right'), 'TRACKER_LIVE': False}
     lock = threading.RLock()
     controller = ipc = fingers = None
@@ -89,13 +95,14 @@ def main():
             elif key == 'h':
                 if not state['START'] or not head_enabled:
                     raise ValueError('Start teleop with head following enabled first')
-                recenter_head(read_frame())
+                recenter_head(read_wrist_frame())
             elif key == 'c':
                 if not state['READY'] or state['START'] or state['STOP']:
                     raise ValueError('Prepare arms and stop following before saving the matching pose')
-                if not inputs.status(both=args.both_arms, optical_hands=args.pico_hands)['ready']:
+                if not inputs.status(both=args.both_arms, optical_hands=args.pico_hands,
+                                     controllers=args.controllers)['ready']:
                     raise ValueError('Connect live wrist and finger tracking before saving the matching pose')
-                frame = read_frame()
+                frame = read_wrist_frame()
                 poses = measured_wrists(controller.get_current_dual_arm_q())
                 reference.save(frame, poses, config, sides)
                 state['POSE_MATCH'] = reference.assess(frame, poses, config, sides)
@@ -103,11 +110,11 @@ def main():
             elif key == 'r':
                 if not state['READY'] or state['STOP'] or state['START']:
                     raise ValueError('Not ready to start')
-                frame = read_frame()
+                frame = read_wrist_frame()
                 if not frame or any(sn not in frame['trackers'] or
                                     frame.get('pose_age_ms', {}).get(sn, 1e9) >= 1000
                                     for sn in serials.values()):
-                    raise ValueError('Move each selected wrist tracker to verify live input')
+                    raise ValueError('Move each '+input_label+' input to verify live poses')
                 basis = heading_basis(frame.get('head_pose'))
                 if args.pico_hands and not hands_status(frame)['ready']:
                     raise ValueError(hands_status(frame)['message'])
@@ -125,7 +132,7 @@ def main():
                     recenter_head(frame)
                 if fingers is not None:
                     fingers.start(frame)
-                state.update(START=True, TRACKER_LIVE=True, INPUT_MESSAGE='Following wrist trackers')
+                state.update(START=True, TRACKER_LIVE=True, INPUT_MESSAGE='Following '+input_label)
                 controller.speed_gradual_max()
                 print(json.dumps({'neutral_captured': True, 'serials': serials,
                                   'trackers': {side: frame['trackers'][sn] for side, sn in serials.items()},
@@ -157,7 +164,7 @@ def main():
         ipc.start()
         with lock:
             state['READY'] = True
-        print(f'READY: native PICO {"both wrists" if args.both_arms else "left wrist"}; press dashboard START in neutral.', flush=True)
+        print(f'READY: native PICO {input_label}; press dashboard START in neutral.', flush=True)
         last_seq, last_log, last_pose_check = None, 0., 0.
         while not state['STOP']:
             tick = time.monotonic()
@@ -165,10 +172,10 @@ def main():
                 active = state['START']
                 if not active and not state['STOP'] and tick-last_pose_check >= .05:
                     state['POSE_MATCH'] = reference.assess(
-                        read_frame(), measured_wrists(controller.get_current_dual_arm_q()), config, sides)
+                        read_wrist_frame(), measured_wrists(controller.get_current_dual_arm_q()), config, sides)
                     last_pose_check = tick
             if active:
-                frame = read_frame()
+                frame = read_wrist_frame()
                 if fingers is not None:
                     finger_status = fingers.update(frame)
                     with lock:
@@ -187,8 +194,8 @@ def main():
                             frame.get('pose_age_ms', {}).get(sn, 1e9) < 1000 for sn in serials.values()))
                 with lock:
                     state['TRACKER_LIVE'] = live
-                    state['INPUT_MESSAGE'] = ('Following wrist trackers' if live else
-                                              'Tracker input unavailable; holding last arm target. STOP before reconnecting.')
+                    state['INPUT_MESSAGE'] = ('Following '+input_label if live else
+                                              input_label+' unavailable; holding last arm target. STOP before reconnecting.')
                 if live and frame['seq'] != last_seq:
                     left_target = np.array(mappers['left'].target(frame['trackers'][serials['left']]))
                     q = controller.get_current_dual_arm_q()
