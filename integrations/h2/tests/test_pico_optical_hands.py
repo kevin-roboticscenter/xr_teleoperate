@@ -147,7 +147,9 @@ class OpticalOwnership(unittest.TestCase):
         up,events = controller(PICO_HAND_SOURCE)
         up.tracker = Mock()
         up.tracker.status.return_value = {'ready': True}
-        self.assertTrue(up.start()[0])
+        self.assertTrue(up.tracker_status()['ready'])
+        with up.lock:
+            self.assertTrue(up._begin_following()[0])
         self.assertEqual(events,['CMD_START'])
         up.tracker.status.assert_called_with(both=True,optical_hands=True)
 

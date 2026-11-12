@@ -95,19 +95,20 @@ class InputLifecycle(unittest.TestCase):
         self.assertNotIn('--ee', argv)
         self.assertNotIn('teleop_hand_and_arm.py', ' '.join(argv))
 
-    def test_native_start_requires_tracker_before_activating_fingers(self):
+    def test_native_start_requires_tracker_and_reference_before_activating_fingers(self):
         up, events = controller('pico_wuji')
         up.tracker = Mock()
         up.tracker.status.return_value = {'ready': False, 'message': 'Enable Head'}
         self.assertFalse(up.start()[0])
         self.assertEqual(events, [])
         up.tracker.status.return_value = {'ready': True}
-        self.assertTrue(up.start()[0])
-        self.assertEqual(events, ['glove_start', 'CMD_START'])
+        self.assertFalse(up.start()[0])
+        self.assertEqual(events, [])
 
     def test_failed_native_arm_start_rolls_back_finger_publisher(self):
         up, events = controller('pico_wuji', ipc_ok=False)
         up.tracker = Mock()
         up.tracker.status.return_value = {'ready': True}
-        self.assertFalse(up.start()[0])
+        with up.lock:
+            self.assertFalse(up._begin_following()[0])
         self.assertEqual(events, ['glove_start', 'CMD_START', 'glove_stop'])

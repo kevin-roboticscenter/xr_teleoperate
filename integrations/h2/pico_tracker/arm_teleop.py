@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Native PICO wrist input, unchanged Unitree PR321 H2 IK and arm control.
 
-LAUNCH initializes arms exactly through the existing H2 controller. START
-captures a neutral tracker pose and the measured robot wrist transform.
+LAUNCH initializes arms exactly through the existing H2 controller. The dashboard
+waits for a taught pose match before START captures neutral tracker/wrist poses.
 --both-arms enables separate left/right wrist trackers. In left-only mode the
 right arm holds its START values. --pico-hands uses optical finger input through
 the unchanged Unitree Dex5 controller; other modes use dashboard-owned fingers.
@@ -22,6 +22,7 @@ from quest_h2_teleop import UPSTREAM, environment
 from pico_tracker.geometry import IncrementalWrist, heading_basis, pose_valid
 from pico_tracker.input import read_frame, TrackerInput
 from pico_tracker.hands import OpticalFingers, hands_status
+from pico_tracker.pose_match import PoseReference
 from head_camera.head_follow import HeadPoseMapper, HeadCommandPublisher, settings as head_settings
 
 
@@ -41,6 +42,7 @@ def main():
     from teleop.utils.ipc import IPC_Server
 
     inputs = TrackerInput(ROOT)
+    reference = PoseReference(ROOT)
     config = inputs.config()
     sides = ('left', 'right') if args.both_arms else ('left',)
     serials = {side: config.get(side+'_sn') for side in sides}
@@ -74,6 +76,9 @@ def main():
         return [ik.reduced_robot.data.oMf[ik.reduced_robot.model.getFrameId(name)].homogeneous.copy()
                 for name in ('L_ee', 'R_ee')]
 
+    def measured_wrists(q):
+        return {side: pose.tolist() for side, pose in zip(('left', 'right'), fk(q))}
+
     def on_press(key):
         nonlocal mappers, session, right_q
         with lock:
@@ -85,6 +90,16 @@ def main():
                 if not state['START'] or not head_enabled:
                     raise ValueError('Start teleop with head following enabled first')
                 recenter_head(read_frame())
+            elif key == 'c':
+                if not state['READY'] or state['START'] or state['STOP']:
+                    raise ValueError('Prepare arms and stop following before saving the matching pose')
+                if not inputs.status(both=args.both_arms, optical_hands=args.pico_hands)['ready']:
+                    raise ValueError('Connect live wrist and finger tracking before saving the matching pose')
+                frame = read_frame()
+                poses = measured_wrists(controller.get_current_dual_arm_q())
+                reference.save(frame, poses, config, sides)
+                state['POSE_MATCH'] = reference.assess(frame, poses, config, sides)
+                print('Matching pose saved for the current operator and wrist tracker mounts.', flush=True)
             elif key == 'r':
                 if not state['READY'] or state['STOP'] or state['START']:
                     raise ValueError('Not ready to start')
@@ -97,8 +112,11 @@ def main():
                 if args.pico_hands and not hands_status(frame)['ready']:
                     raise ValueError(hands_status(frame)['message'])
                 q = controller.get_current_dual_arm_q()
-                poses = dict(zip(('left', 'right'), fk(q)))
-                mappers = {side: IncrementalWrist(frame['trackers'][sn], poses[side].tolist(), basis,
+                poses = measured_wrists(q)
+                match = reference.assess(frame, poses, config, sides)
+                if not match['ready']:
+                    raise ValueError(match['message'])
+                mappers = {side: IncrementalWrist(frame['trackers'][sn], poses[side], basis,
                            config.get('offset_tracker_m' if side == 'left' else 'right_offset_tracker_m', [0., 0., 0.]))
                            for side, sn in serials.items()}
                 session, right_q = frame['session'], q[7:].copy()
@@ -110,7 +128,7 @@ def main():
                 controller.speed_gradual_max()
                 print(json.dumps({'neutral_captured': True, 'serials': serials,
                                   'trackers': {side: frame['trackers'][sn] for side, sn in serials.items()},
-                                  'robot_wrists': {side: poses[side].tolist() for side in sides},
+                                  'robot_wrists': {side: poses[side] for side in sides},
                                   'heading_basis': basis, 'right_q': right_q.tolist()}), flush=True)
 
     def get_state():
@@ -134,16 +152,20 @@ def main():
                                                   controller.get_current_motor_q()[[29, 30]])
             controller.lowcmd_publisher = head_publisher
         ipc = IPC_Server(on_press=on_press, get_state=get_state)
-        ipc.cmd_map = dict(ipc.cmd_map, CMD_HEAD_RECENTER='h')
+        ipc.cmd_map = dict(ipc.cmd_map, CMD_HEAD_RECENTER='h', CMD_POSE_CALIBRATE='c')
         ipc.start()
         with lock:
             state['READY'] = True
         print(f'READY: native PICO {"both wrists" if args.both_arms else "left wrist"}; press dashboard START in neutral.', flush=True)
-        last_seq, last_log = None, 0.
+        last_seq, last_log, last_pose_check = None, 0., 0.
         while not state['STOP']:
             tick = time.monotonic()
             with lock:
                 active = state['START']
+                if not active and not state['STOP'] and tick-last_pose_check >= .05:
+                    state['POSE_MATCH'] = reference.assess(
+                        read_frame(), measured_wrists(controller.get_current_dual_arm_q()), config, sides)
+                    last_pose_check = tick
             if active:
                 frame = read_frame()
                 if fingers is not None:

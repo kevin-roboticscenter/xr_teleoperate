@@ -91,6 +91,11 @@ competing arm/head DDS publishers. Unitree's SDK supports FSM4 and703 for
 these commands. Walking uses the existing Unitree motion controller/remote.
 Leg-tracker locomotion and a dedicated arms-only mode are not implemented.
 
+Native wrist modes now wait for a taught wrist pose before following. Prepare
+arms, save a matching reference on first use, then Start pose check and hold the
+match for one second. Arm/finger/head following and automatic recording begin
+after the match. See [pose matching](deployment/PICO_POSE_MATCH.md).
+
 ## Camera
 
 The confirmed PC3 is Jetson Thor / JetPack7.1 (R38.4), normally at

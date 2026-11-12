@@ -57,7 +57,9 @@ class DualOwnership(unittest.TestCase):
         up.tracker = Mock()
         up.tracker.status.return_value = {'ready': True}
         up._send = lambda cmd: (events.append(cmd) or True, 'ok')
-        self.assertTrue(up.start()[0])
+        self.assertTrue(up.tracker_status()['ready'])
+        with up.lock:
+            self.assertTrue(up._begin_following()[0])
         self.assertEqual(events, ['left_start', 'right_start', 'CMD_START'])
         up.tracker.status.assert_called_with(both=True)
 
@@ -111,7 +113,8 @@ class DualOwnership(unittest.TestCase):
         up.tracker = Mock()
         up.tracker.status.return_value = {'ready': True}
         up._send = lambda cmd: (events.append(cmd) or False, 'failed')
-        self.assertFalse(up.start()[0])
+        with up.lock:
+            self.assertFalse(up._begin_following()[0])
         self.assertEqual(events, ['left_start', 'right_start', 'CMD_START', 'left_stop', 'right_stop'])
 
     def test_stop_ends_both_hands_after_arm_heartbeat_loss(self):

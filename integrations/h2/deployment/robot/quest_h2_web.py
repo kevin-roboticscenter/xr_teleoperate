@@ -39,6 +39,7 @@ import zmq
 from quest_h2_teleop import (GAIN_SETTINGS_PATH, ROOT, UPSTREAM, command, environment,
                             PICO_HAND_SOURCE, NATIVE_SOURCES)
 from pico_tracker.input import TrackerInput
+from pico_tracker.pose_match import MatchDwell
 from head_camera.head_follow import settings as head_settings
 from teleop.utils.dex5_gains import GainProfile, GainStore, MIN_MULTIPLIER, MAX_MULTIPLIER
 
@@ -51,6 +52,7 @@ PAGE_PATH = '/h2-teleop'   # '/' redirects here; the browser supplies the Wi-Fi 
 # Matches Unitree's example/h2/high_level/h2_arm_sdk_dds_example.py.
 TELEOP_FSM_IDS = (4, 703)
 HAND_SOURCE_PATH = GAIN_SETTINGS_PATH.parent / 'hand_source.json'
+POSE_MATCH_SOURCES = ('pico_wuji', 'pico_dual_wuji', PICO_HAND_SOURCE)
 
 
 class Fsm:
@@ -220,6 +222,8 @@ class Upstream:
         self.hb = {}
         self.hb_time = 0.0
         self.started_at = None      # time CMD_START was accepted
+        self.pose_waiting, self.pose_wait_generation = False, 0
+        self.pose_wait_progress, self.pose_wait_message = 0., ''
         self.last_exit = None       # return code of the last process we spawned
         self.gain_store = gain_store if gain_store is not None else GainStore(GAIN_SETTINGS_PATH)
         self.active_gains = None
@@ -401,6 +405,9 @@ class Upstream:
                                                 stdout=log, stderr=subprocess.STDOUT,
                                                 stdin=subprocess.DEVNULL, start_new_session=True)
             self.active_gains = profile
+            self.pose_waiting = False
+            self.pose_wait_generation = getattr(self, 'pose_wait_generation', 0)+1
+            self.pose_wait_progress, self.pose_wait_message = 0., ''
             self.started_at, self.last_exit, self.hb, self.hb_time = None, None, {}, 0.0
             hands = 'hands opening' if getattr(self, 'hand_source', 'vr') in ('vr', PICO_HAND_SOURCE) else 'Wuji fingers wait for START'
             if getattr(self, 'hand_source', 'vr') == 'pico_head':
@@ -440,24 +447,120 @@ class Upstream:
                 return False, 'Not READY yet'
             if hb.get('START'):
                 return False, 'Already following'
+            if getattr(self, 'pose_waiting', False):
+                return False, 'Already waiting for the matching pose; STOP cancels'
             if getattr(self, 'hand_source', 'vr') in NATIVE_SOURCES and not self.tracker_status()['ready']:
                 return False, self.tracker_status()['message']
-            glove = getattr(self, 'wuji', None)
-            if getattr(self, 'hand_source', 'vr') in ('wuji', 'pico_wuji', 'pico_dual_wuji'):
-                if glove is None: return False, 'Wuji input unavailable'
-                ok, msg = glove.start()
-                if not ok: return False, msg
-            ok, msg = self._send('CMD_START')
-            if not ok and getattr(self, 'hand_source', 'vr') in ('wuji', 'pico_wuji', 'pico_dual_wuji') and glove is not None:
-                glove.stop()
+            if getattr(self, 'hand_source', 'vr') in POSE_MATCH_SOURCES:
+                assessment = hb.get('POSE_MATCH', {})
+                if not assessment.get('calibrated'):
+                    return False, assessment.get('message', 'Match the prepared robot and Save matching pose first')
+                if not assessment.get('robot_matches'):
+                    return False, assessment.get('message', 'Robot ready pose does not match the saved reference')
+                self.pose_wait_generation = getattr(self, 'pose_wait_generation', 0)+1
+                self.pose_waiting, self.pose_wait_progress = True, 0.
+                self.pose_wait_message = 'Waiting for pose match; match both wrists and look forward'
+                threading.Thread(target=self._wait_for_pose, args=(self.pose_wait_generation,), daemon=True).start()
+                return True, self.pose_wait_message
+            return self._begin_following()
+
+    def _begin_following(self):
+        """Called with the controller lock held, after the match when required."""
+        glove = getattr(self, 'wuji', None)
+        uses_glove = getattr(self, 'hand_source', 'vr') in ('wuji', 'pico_wuji', 'pico_dual_wuji')
+        if uses_glove:
+            if glove is None: return False, 'Wuji input unavailable'
+            ok, msg = glove.start()
+            if not ok: return False, msg
+        ok, msg = self._send('CMD_START')
+        if not ok and uses_glove and glove is not None:
+            glove.stop()
+        if ok:
+            self.started_at = time.monotonic()
+            if getattr(self, 'auto_recording', None):
+                self.auto_recording.notify()
+        return ok, 'Following started' if ok else msg
+
+    def save_matching_pose(self):
+        with self.lock:
+            hb = self.hb if self.online() else {}
+            if self.hand_source not in POSE_MATCH_SOURCES:
+                return False, 'Select a native PICO wrist tracker mode'
+            if (not hb.get('READY') or hb.get('START') or hb.get('STOP') or
+                    getattr(self, 'pose_waiting', False)):
+                return False, 'Prepare arms, then save the matching pose before pressing Start'
+            tracker = self.tracker_status()
+            if not tracker['ready']:
+                return False, tracker['message']
+            ok, message = self._send('CMD_POSE_CALIBRATE')
             if ok:
-                self.started_at = time.monotonic()
-                if getattr(self, 'auto_recording', None):
-                    self.auto_recording.notify()
-            return ok, 'Following started' if ok else msg
+                self.pose_wait_message = ''
+            return ok, 'Matching pose saved for this operator and tracker placement' if ok else message
+
+    def _match_tick(self, dwell, now):
+        """One match observation, under lock; kept separate for offline checks."""
+        hb = self.hb if self.online() else {}
+        assessment = hb.get('POSE_MATCH', {})
+        tracker = self.tracker_status()
+        mode_ready = not self.fsm.busy and self.fsm.current() in TELEOP_FSM_IDS
+        ready = bool(hb.get('READY') and not hb.get('START') and not hb.get('STOP') and
+                     tracker['ready'] and mode_ready)
+        progress = dwell.update(assessment, ready, now)
+        self.pose_wait_progress = progress['progress']
+        self.pose_wait_message = (tracker['message'] if not tracker['ready'] else
+                                  'Waiting for a supported robot mode' if not mode_ready else
+                                  'Waiting for fresh teleop state' if not hb else
+                                  assessment.get('message', 'Waiting for matching pose feedback'))
+        if not progress['complete']:
+            return None
+        # The native arm process rechecks the current measured wrists and input
+        # before accepting CMD_START. Fingers are activated only after this wait.
+        ok, message = self._begin_following()
+        self.pose_waiting = False
+        self.pose_wait_message = message if ok else 'Could not start: '+message
+        return ok, message
+
+    def _wait_for_pose(self, generation):
+        dwell = MatchDwell()
+        try:
+            while True:
+                with self.lock:
+                    if not self.pose_waiting or generation != self.pose_wait_generation:
+                        return
+                    if not self.running() or self.hb.get('STOP'):
+                        self.pose_waiting = False
+                        self.pose_wait_message = 'Pose check cancelled; prepare arms again'
+                        return
+                    result = self._match_tick(dwell, time.monotonic())
+                    if result is not None:
+                        print(time.strftime('%H:%M:%S'), 'pose-match/start', *result, flush=True)
+                        return
+                time.sleep(.05)
+        except Exception as exc:
+            with self.lock:
+                if generation == self.pose_wait_generation:
+                    self.pose_waiting = False
+                    self.pose_wait_message = f'Pose check stopped: {exc}'
+            print(time.strftime('%H:%M:%S'), 'pose-match/error', str(exc), flush=True)
+
+    def pose_match_status(self, hb):
+        enabled = getattr(self, 'hand_source', 'vr') in POSE_MATCH_SOURCES
+        value = dict(hb.get('POSE_MATCH', {})) if enabled else {}
+        waiting = bool(getattr(self, 'pose_waiting', False))
+        value.update(enabled=enabled, waiting=waiting,
+                     progress=getattr(self, 'pose_wait_progress', 0.) if waiting else 0.,
+                     can_calibrate=bool(enabled and hb.get('READY') and not hb.get('START') and
+                                        not hb.get('STOP') and not waiting))
+        if waiting or not value.get('message') or (not hb.get('START') and getattr(self, 'pose_wait_message', '')):
+            value['message'] = (getattr(self, 'pose_wait_message', '') or
+                                'Prepare arms, match the robot, then Save matching pose')
+        return value
 
     def stop(self):
         with self.lock:
+            self.pose_waiting = False
+            self.pose_wait_generation = getattr(self, 'pose_wait_generation', 0)+1
+            self.pose_wait_progress, self.pose_wait_message = 0., ''
             glove = getattr(self, 'wuji', None)
             was_active = glove is not None and glove.status()['active']
             glove_ok, glove_message = glove.stop() if glove is not None else (True, '')
@@ -504,19 +607,26 @@ class Upstream:
             state, phase = f'Wuji {glove_status.get("test_side") or "hand"} finger test following · STOP ends the test', 'hand_test'
         feedback = glove_status.get('hand_feedback') if glove_status is not None else None
         tracker = self.tracker_status()
+        pose_match = self.pose_match_status(hb)
         if phase == 'ready' and getattr(self, 'hand_source', 'vr') in NATIVE_SOURCES and tracker and not tracker['ready']:
             state, phase = tracker['message'], 'tracker_wait'
         if phase == 'following' and hb.get('INPUT') == 'pico_tracker' and not hb.get('TRACKER_LIVE'):
             state = hb.get('INPUT_MESSAGE', 'Tracker input unavailable; arms holding last target')
         if phase in ('ready', 'tracker_wait') and getattr(self, 'hand_source', 'vr') in ('wuji', 'pico_wuji', 'pico_dual_wuji') and feedback and not feedback['ready']:
             state, phase = feedback['message'] + ' · arms initialized; resolve hand feedback before START', 'hand_fault'
+        if phase in ('ready', 'tracker_wait', 'hand_fault') and pose_match['waiting']:
+            state, phase = 'Waiting for pose match · '+pose_match['message'], 'matching'
+        elif phase == 'ready' and pose_match['enabled']:
+            state = ('Arms prepared · save matching pose' if not pose_match.get('calibrated') else
+                     'Arms prepared · '+pose_match['message'] if not pose_match.get('robot_matches') else
+                     'Arms prepared · press Start pose check')
         if getattr(self, 'hand_source', 'vr') == 'pico_head' and phase == 'init':
             state = 'Preparing head tracking; arms and fingers are not following'
         if getattr(self, 'hand_source', 'vr') == 'pico_head' and phase == 'stopping':
             state = 'Stopping head tracking…'
         if getattr(self, 'hand_source', 'vr') == 'pico_head' and phase == 'following' and not hb.get('HEAD_LIVE'):
             state = 'Head input unavailable; holding neck target'
-        return {'state': state, 'phase': phase, 'running': running, 'heartbeat': hb,
+        return {'state': state, 'phase': phase, 'running': running, 'heartbeat': hb, 'pose_match': pose_match,
                 'hand_source': getattr(self, 'hand_source', 'vr'),
                 'wuji': glove_status,
                 'pico_tracker': tracker,
@@ -594,13 +704,14 @@ PAGE ='''<!doctype html><html lang="en"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
 <title>H2 Teleop Control</title><style>
 :root{--bg:#f1f4f6;--fg:#182b34;--muted:#667782;--card:#fff;--line:#dce4e8;--accent:#117661}
-*{box-sizing:border-box}[hidden]{display:none!important}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}button,input,select{font:inherit}button{cursor:pointer;touch-action:manipulation}button:disabled{cursor:default;opacity:.4}a{color:#126caa}small{display:block;color:var(--muted);font-size:12px;line-height:1.55}h1,h2{margin:0}h1{font-size:27px;font-weight:650;letter-spacing:-.8px}h2{font-size:17px;font-weight:650}label{font-weight:550}.app-shell{max-width:1380px;margin:0 auto;padding:28px 32px}.topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}.eyebrow{font-size:10px;letter-spacing:1.6px;font-weight:700;color:var(--muted)}.top-meta{color:var(--muted);font-size:12px;background:#e6ecef;border:1px solid var(--line);padding:6px 12px;border-radius:20px}.control-bar{position:sticky;top:12px;z-index:10;background:#fff;border:1px solid var(--line);border-radius:16px;padding:18px 22px;margin-bottom:22px;box-shadow:0 5px 18px #20354209}.status-row{display:flex;align-items:baseline;gap:20px;justify-content:space-between;margin-bottom:14px}#state{font-size:20px;font-weight:650;letter-spacing:-.3px}#state.following{color:#087c50}#state.ready{color:#176fac}#state.init,#state.stopping{color:#9e620b}#state.lost{color:#c73030}#fsm{font-size:11px;max-width:60%;color:var(--muted);text-align:right}#fsm.bad{color:#b14e38}#fsm.ok{color:#087c50}.primary-actions{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}button{border:1px solid var(--line);border-radius:9px;padding:10px 14px;background:#edf2f5;color:var(--fg);font-weight:600;transition:filter .15s}button:hover:not(:disabled){filter:brightness(.96)}.primary-actions button{font-size:15px;min-height:49px}.step{font-size:10px;display:inline-flex;justify-content:center;align-items:center;width:19px;height:19px;border:1px solid currentColor;border-radius:50%;margin-right:7px;opacity:.7}#launch{background:#edf2f5}#start{background:#117661;border-color:#117661;color:white}#stop{background:#c7433f;border-color:#c7433f;color:white}.control-note{font-size:11px;margin-top:9px}#msg:empty{display:none}#msg{font-size:12px;color:#906015;margin-top:10px}.workspace{display:grid;grid-template-columns:minmax(0,1.8fr) minmax(300px,1fr);gap:20px;align-items:start}.panel{padding:21px;background:var(--card);border:1px solid var(--line);border-radius:14px;margin-bottom:18px;min-width:0}.panel-heading{display:flex;gap:12px;align-items:center;justify-content:space-between;margin-bottom:12px}#head-camera-state,#camera-state,.detail-status,#head-video-state{font-size:12px;color:var(--muted);margin-bottom:10px}#head-camera-image{width:100%;height:auto;aspect-ratio:16/9;object-fit:contain;border-radius:9px;background:#e5ebee;margin:0 0 15px}.head-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}.switch-label{display:flex;align-items:center;gap:8px;font-size:13px}input[type=checkbox]{accent-color:var(--accent);width:16px;height:16px}#head-recenter{font-size:12px;padding:7px 11px}details>summary{cursor:pointer;font-size:14px;font-weight:600;list-style-position:inside}details>summary span{float:right;font-size:11px;font-weight:400;color:var(--muted)}details[open]>summary{margin-bottom:17px}.help{margin-top:10px}.help>summary{font-size:12px;color:var(--muted);font-weight:500}.input-setup{font-size:12px}.input-setup select{display:block;width:100%;border:1px solid var(--line);border-radius:8px;background:#f8fafb;color:var(--fg);font-size:12px!important;padding:10px!important;margin:8px 0 14px!important}.input-setup button{width:100%;font-size:12px!important;padding:10px!important;margin:10px 0!important;background:#edf4f7!important;color:#244958!important;border:1px solid #d8e5eb}#wuji-state,#right-glove-state,#tracker-state{font-size:12px;margin:8px 0 12px;overflow-wrap:anywhere}.input-setup small{font-size:11px}.settings-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 18px;align-items:start}.secondary-actions{display:flex;gap:10px;flex-wrap:wrap}.secondary-actions button{font-size:12px;margin:12px 0}.waiting{color:#956016}.ready{color:#087c50}#hand-gains h2,#right-grasp h2{display:none}#hand-gains label{display:block;font-size:13px;margin-top:15px}#hand-gains input[type=range]{width:100%;height:26px;accent-color:var(--accent);margin:8px 0}#hand-gains output{float:right;font-variant-numeric:tabular-nums}#hand-gains button,#right-grasp button{font-size:12px;margin:10px 8px 0 0}#gain-state,#gain-message,#grasp-state,#grasp-settings,#recinfo,#auto-rec-state{font-size:12px;margin-top:10px;color:var(--muted)}#grasp-hold{background:#117661;color:white}#grasp-release{background:#a85b26;color:white}#rec{margin:10px 0;font-size:13px}#rec.on{background:#fff0ef;border-color:#d24640;color:#b6312b}#camera-image{width:100%;max-width:840px;display:block;margin:10px auto;border-radius:8px}pre{font:11px/1.6 ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere;background:#f4f7f9;border-radius:8px;padding:14px;max-height:300px;overflow:auto}footer{font-size:11px;color:var(--muted);padding:4px 0 12px}#source-help{margin-top:14px}
+*{box-sizing:border-box}[hidden]{display:none!important}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}button,input,select{font:inherit}button{cursor:pointer;touch-action:manipulation}button:disabled{cursor:default;opacity:.4}a{color:#126caa}small{display:block;color:var(--muted);font-size:12px;line-height:1.55}h1,h2{margin:0}h1{font-size:27px;font-weight:650;letter-spacing:-.8px}h2{font-size:17px;font-weight:650}label{font-weight:550}.app-shell{max-width:1380px;margin:0 auto;padding:28px 32px}.topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}.eyebrow{font-size:10px;letter-spacing:1.6px;font-weight:700;color:var(--muted)}.top-meta{color:var(--muted);font-size:12px;background:#e6ecef;border:1px solid var(--line);padding:6px 12px;border-radius:20px}.control-bar{position:sticky;top:12px;z-index:10;background:#fff;border:1px solid var(--line);border-radius:16px;padding:18px 22px;margin-bottom:22px;box-shadow:0 5px 18px #20354209}.status-row{display:flex;align-items:baseline;gap:20px;justify-content:space-between;margin-bottom:14px}#state{font-size:20px;font-weight:650;letter-spacing:-.3px}#state.following{color:#087c50}#state.ready{color:#176fac}#state.init,#state.stopping,#state.matching{color:#9e620b}#state.lost{color:#c73030}#fsm{font-size:11px;max-width:60%;color:var(--muted);text-align:right}#fsm.bad{color:#b14e38}#fsm.ok{color:#087c50}.primary-actions{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}button{border:1px solid var(--line);border-radius:9px;padding:10px 14px;background:#edf2f5;color:var(--fg);font-weight:600;transition:filter .15s}button:hover:not(:disabled){filter:brightness(.96)}.primary-actions button{font-size:15px;min-height:49px}.step{font-size:10px;display:inline-flex;justify-content:center;align-items:center;width:19px;height:19px;border:1px solid currentColor;border-radius:50%;margin-right:7px;opacity:.7}#launch{background:#edf2f5}#start{background:#117661;border-color:#117661;color:white}#stop{background:#c7433f;border-color:#c7433f;color:white}.control-note{font-size:11px;margin-top:9px}#msg:empty{display:none}#msg{font-size:12px;color:#906015;margin-top:10px}.workspace{display:grid;grid-template-columns:minmax(0,1.8fr) minmax(300px,1fr);gap:20px;align-items:start}.panel{padding:21px;background:var(--card);border:1px solid var(--line);border-radius:14px;margin-bottom:18px;min-width:0}.panel-heading{display:flex;gap:12px;align-items:center;justify-content:space-between;margin-bottom:12px}#head-camera-state,#camera-state,.detail-status,#head-video-state{font-size:12px;color:var(--muted);margin-bottom:10px}#head-camera-image{width:100%;height:auto;aspect-ratio:16/9;object-fit:contain;border-radius:9px;background:#e5ebee;margin:0 0 15px}.head-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}.switch-label{display:flex;align-items:center;gap:8px;font-size:13px}input[type=checkbox]{accent-color:var(--accent);width:16px;height:16px}#head-recenter{font-size:12px;padding:7px 11px}details>summary{cursor:pointer;font-size:14px;font-weight:600;list-style-position:inside}details>summary span{float:right;font-size:11px;font-weight:400;color:var(--muted)}details[open]>summary{margin-bottom:17px}.help{margin-top:10px}.help>summary{font-size:12px;color:var(--muted);font-weight:500}.input-setup{font-size:12px}.input-setup select{display:block;width:100%;border:1px solid var(--line);border-radius:8px;background:#f8fafb;color:var(--fg);font-size:12px!important;padding:10px!important;margin:8px 0 14px!important}.input-setup button{width:100%;font-size:12px!important;padding:10px!important;margin:10px 0!important;background:#edf4f7!important;color:#244958!important;border:1px solid #d8e5eb}#wuji-state,#right-glove-state,#tracker-state{font-size:12px;margin:8px 0 12px;overflow-wrap:anywhere}.input-setup small{font-size:11px}.settings-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 18px;align-items:start}.secondary-actions{display:flex;gap:10px;flex-wrap:wrap}.secondary-actions button{font-size:12px;margin:12px 0}.waiting{color:#956016}.ready{color:#087c50}#hand-gains h2,#right-grasp h2{display:none}#hand-gains label{display:block;font-size:13px;margin-top:15px}#hand-gains input[type=range]{width:100%;height:26px;accent-color:var(--accent);margin:8px 0}#hand-gains output{float:right;font-variant-numeric:tabular-nums}#hand-gains button,#right-grasp button{font-size:12px;margin:10px 8px 0 0}#gain-state,#gain-message,#grasp-state,#grasp-settings,#recinfo,#auto-rec-state{font-size:12px;margin-top:10px;color:var(--muted)}#grasp-hold{background:#117661;color:white}#grasp-release{background:#a85b26;color:white}#rec{margin:10px 0;font-size:13px}#rec.on{background:#fff0ef;border-color:#d24640;color:#b6312b}#camera-image{width:100%;max-width:840px;display:block;margin:10px auto;border-radius:8px}pre{font:11px/1.6 ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere;background:#f4f7f9;border-radius:8px;padding:14px;max-height:300px;overflow:auto}footer{font-size:11px;color:var(--muted);padding:4px 0 12px}#source-help{margin-top:14px}
 @media(max-width:900px){.app-shell{padding:20px}.workspace{grid-template-columns:1fr}.input-setup{margin-top:0}.control-bar{top:8px}.status-row{display:block}#fsm{max-width:100%;text-align:left;margin-top:4px}.settings-grid{gap:0 14px}.pov-panel{margin-bottom:0}}
 @media(max-width:560px){.app-shell{padding:14px 10px}.topbar{margin:0 5px 18px}h1{font-size:24px}.top-meta{display:none}.control-bar{padding:14px;border-radius:12px}.primary-actions{gap:6px}.primary-actions button{font-size:12px;padding:10px 6px;min-height:47px}.step{display:none}#state{font-size:18px}.panel{padding:16px}.settings-grid{grid-template-columns:1fr}.panel-heading{display:block}.panel-heading .eyebrow{display:block;margin-top:4px}.head-toolbar{align-items:center}.control-note{font-size:10px}}
 </style>
 <div class="app-shell">
 <header class="topbar"><div><div class="eyebrow">UNITREE H2</div><h1>Teleoperation</h1></div><span class="top-meta">PICO · Quest · Wuji</span></header>
 <section class="control-bar" aria-label="Teleoperation controls"><div class="status-row"><div id="state" role="status" aria-live="polite">Connecting…</div><div id="fsm">Reading robot mode…</div></div><div class="primary-actions"><button id="launch" disabled onclick="launchConfirm()"><span class="step">1</span> Prepare arms</button><button id="start" disabled onclick="send('start')"><span class="step">2</span> Start following</button><button id="stop" disabled onclick="send('stop')">Stop following</button></div><div id="msg" role="status" aria-live="polite"></div><small class="control-note">Start captures your neutral pose. Stop ends arm, finger and head following; use the remote for walking.</small></section>
+<section class="panel" id="pose-match" hidden aria-label="Start pose matching"><div class="panel-heading"><h2>Start pose</h2><button id="pose-save" onclick="saveMatchingPose()" disabled>Save matching pose</button></div><div id="pose-state" role="status" aria-live="polite"></div><div id="pose-left"></div><div id="pose-right"></div><progress id="pose-progress" max="1" value="0" hidden style="width:100%;margin-top:10px" aria-label="Continuous pose match"></progress><small>First use: Prepare arms, physically match H2’s wrist positions and angles, look forward, then Save matching pose. Start pose check waits for a steady match before following. Save again for a different wearer or tracker mounting. This checks wrists; elbow placement is inferred.</small></section>
 <main><div class="workspace"><section class="panel pov-panel"><div class="panel-heading"><h2>Robot POV</h2><span class="eyebrow">HEAD CAMERA · LEFT EYE</span></div><div id="head-camera-state">Waiting for head camera…</div><img id="head-camera-image" alt="H2 head camera left eye"  hidden><div class="head-toolbar"><label class="switch-label"><input id="head-follow" type="checkbox" onchange="setHeadFollow()"> Follow headset</label><button id="head-recenter" onclick="send('head-recenter')" disabled>Recenter</button></div><div id="head-follow-state" class="detail-status"></div><details class="help"><summary>Set up the headset view</summary><small>Use native PICO wrist trackers + Wuji. Look forward at START; yaw and pitch follow your headset. Recenter keeps the current robot neck pose. STOP ends following. In PICO XRoboToolkit: Remote Vision → ZEDMINI → Listen → this laptop's IP. This uses the H2 left-eye camera for both eyes. Head-camera recording is not enabled.</small></details><div id="head-video-state"></div></section><section class="panel input-setup"><div class="panel-heading"><h2>Inputs</h2><span class="eyebrow">CONNECT & SELECT</span></div>
 <label for="hand-source"><strong>Control mode</strong></label>
 <select id="hand-source" onchange="setHandSource()" style="display:block;width:100%;font-size:20px;padding:12px;margin:12px 0" disabled>
@@ -692,14 +803,34 @@ async function refresh(){
     const ho=s.hand_source==='pico_head',hf=s.head_follow||{},hn=ho||s.hand_source==='pico_wuji'||s.hand_source==='pico_dual_wuji'||s.hand_source==='pico_tracker_hands';
     $('#head-follow').checked=ho||!!hf.enabled&&hn;$('#head-follow').disabled=s.running||!hn||ho;
     $('#launch').textContent=ho?'Prepare head tracking':'Prepare arms';
-    $('#start').textContent=ho?'Start head following':'Start following';
+    $('#start').textContent=ho?'Start head following':s.pose_match&&s.pose_match.enabled?'Start pose check':'Start following';
     $('#head-recenter').disabled=!(hf.active&&phase==='following');
     $('#head-follow-state').textContent=!hn?'Head following uses a native PICO mode':hf.active?(hf.live?'Head following active':'Head input unavailable; holding neck target'):hf.enabled?'Head following selected for the next START':'Head following off';
     const hv=s.head_video;
     $('#head-video-state').textContent=hv?(hv.streaming?'PICO POV streaming · '+hv.fps+' fps':hv.error?'PICO POV: '+hv.error:'PICO POV ready — select Listen in XRoboToolkit'):'PICO POV bridge unavailable';
     renderWuji(s);
-    $('#launch').disabled=busy||s.running||!!(s.wuji&&s.wuji.active)||graspActive||!modeReady||s.fsm_busy;$('#start').disabled=busy||s.phase!=='ready';$('#stop').disabled=busy||(!s.running&&!(s.wuji&&s.wuji.active));
+    renderPoseMatch(s);
+    $('#launch').disabled=busy||s.running||!!(s.wuji&&s.wuji.active)||graspActive||!modeReady||s.fsm_busy;$('#start').disabled=busy||s.phase!=='ready'||!!(s.pose_match&&s.pose_match.enabled&&(!s.pose_match.calibrated||!s.pose_match.robot_matches));$('#stop').disabled=busy||(!s.running&&!(s.wuji&&s.wuji.active));
   }catch(e){if(++fails>2){$('#auto-rec').disabled=true;$('#grasp-hold').disabled=$('#grasp-release').disabled=true;$('#grasp-state').textContent=graspActive?'Connection lost — H2 was holding and is configured to continue. Live hand status unavailable. Reconnect to release.':'Hold status unavailable — reconnect to H2.';$('#state').textContent='Control page disconnected — check the robot and use its remote if needed';$('#state').className='lost';$('#walking').textContent='Walking readiness unavailable · H2 disconnected';$('#walking').className='waiting';$('#motion').disabled=$('#fsm4').disabled=$('#launch').disabled=$('#start').disabled=true}}
+}
+function renderPoseMatch(s){
+  const p=s.pose_match||{};$('#pose-match').hidden=!p.enabled;
+  if(!p.enabled)return;
+  const following=s.phase==='following',live=!!(s.pico_tracker&&s.pico_tracker.ready);
+  $('#pose-save').disabled=busy||!p.can_calibrate||!live;
+  $('#pose-state').textContent=following?'Following · start pose matched':p.waiting?('Waiting for pose match · '+p.message+' · '+Math.round(100*(p.progress||0))+'%'):p.message;
+  $('#pose-progress').hidden=!p.waiting;$('#pose-progress').value=p.progress||0;
+  for(const side of ['left','right']){
+    const v=(p.sides||{})[side],e=$('#pose-'+side);e.hidden=!v||following;
+    if(!v)continue;
+    const directions=[['forward','back'],['left','right'],['up','down']];
+    const hints=(v.move_m||[]).map((x,i)=>Math.abs(x)<.01?'':directions[i][x>=0?0:1]+' '+Math.round(Math.abs(x)*100)+' cm').filter(Boolean);
+    e.className=v.matched?'ready':'waiting';
+    e.textContent=(side==='left'?'Left':'Right')+': '+(v.matched?'matched':hints.join(', ')||'adjust wrist angle')+' ('+(v.position_error_m*100).toFixed(1)+' cm, '+Number(v.orientation_error_deg).toFixed(1)+'°)';
+  }
+}
+function saveMatchingPose(){
+  if(confirm('Match the prepared robot’s wrist positions and angles, and look straight forward. Save this pose for the current wearer and wrist tracker mounts?'))send('pico/pose-calibrate');
 }
 function renderWuji(s){
   const w=s.wuji||{},b=s.glove_bridge||{};
@@ -733,7 +864,7 @@ function renderWuji(s){
   const rightSelect=$('#right-tracker-sn');
   if(JSON.stringify(serials)!==rightSelect.dataset.serials){rightSelect.replaceChildren(new Option('Choose right tracker',''),...serials.map(sn=>new Option(sn,sn)));rightSelect.dataset.serials=JSON.stringify(serials)}
   rightSelect.value=t.right_sn||'';rightSelect.disabled=busy||s.running;
-  $('#source-help').textContent=headOnly?'Head + Send in XRoboToolkit. Prepare head tracking → look forward → Start head following. Arms hold their current pose; finger following is off. Stop ends the test.':optical?'XRoboToolkit: Head + Hand + Object Tracking + Send. Connect PICO tracker input and show both hands. Trackers drive arms/wrists; optical hand tracking drives fingers. Prepare arms → match the robot pose and look forward → Start following. Wuji gloves are not required.':native?'Connect tracker(s) + calibrated glove(s) → Prepare arms → match the robot arm pose and look forward → Start following. Stop ends arms, fingers and head following.':'Browser modes: Connect glove if selected → LAUNCH → enter headset Pass-through → START. Wuji controls left fingers; right fingers keep their last pose.';
+  $('#source-help').textContent=headOnly?'Head + Send in XRoboToolkit. Prepare head tracking → look forward → Start head following. Arms hold their current pose; finger following is off. Stop ends the test.':optical?'XRoboToolkit: Head + Hand + Object Tracking + Send. Connect PICO tracker input and show both hands. Trackers drive arms/wrists; optical hand tracking drives fingers. Prepare arms → Save matching pose on first use → Start pose check → match both wrists and look forward until following starts. Wuji gloves are not required.':native?'Connect tracker(s) + calibrated glove(s) → Prepare arms → Save matching pose on first use → Start pose check → hold the matching wrist pose until following starts. Stop ends arms, fingers and head following.':'Browser modes: Connect glove if selected → LAUNCH → enter headset Pass-through → START. Wuji controls left fingers; right fingers keep their last pose.';
 }
 async function selectTracker(side='left'){
   busy=true;
@@ -945,6 +1076,7 @@ def handler(up, rec, auto=None):
                 except OSError as exc:
                     return self.respond(500, {'message': f'Could not save settings: {exc}'})
             actions = {'/api/launch': up.launch, '/api/start': up.start, '/api/stop': up.stop,
+                       '/api/pico/pose-calibrate': up.save_matching_pose,
                        '/api/head-recenter': lambda: up._send('CMD_HEAD_RECENTER'),
                        '/api/wuji/test-right': lambda: up.start_wuji_test('right'),
                        '/api/fsm4': lambda: up.body_mode(4),

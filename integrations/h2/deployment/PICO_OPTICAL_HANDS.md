@@ -12,7 +12,10 @@ PC2 integration while teleop was idle. Physical following validation is pending.
    and show both hands until both optical finger inputs report tracked.
 4. Use the existing supported H2 mode (4 or 703), then **Prepare arms**. The
    existing Unitree controller opens both hands during preparation.
-5. Match the prepared arm pose, look forward, and press **Start following**.
+5. On first use, physically match the prepared wrist pose, look forward, and
+   **Save matching pose**. Then press **Start pose check** and hold the matching
+   pose for one second; following begins automatically. See
+   [pose matching](PICO_POSE_MATCH.md).
 6. **Stop following** ends finger publishing and returns the arms home through
    the existing controller. Walking stays under the Unitree remote.
 

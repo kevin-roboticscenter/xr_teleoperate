@@ -49,6 +49,14 @@ XRoboToolkit head following and its camera view are separate from this mode.
 4. Browser poses drive both arms; the Wuji glove drives left fingers. Right
    fingers retain their last pose. **Stop following** ends the session.
 
+## Native wrist start-pose reference
+
+On first use, after Prepare arms, physically match the robot’s wrist positions
+and angles, look forward, and press **Save matching pose**. Repeat after changing
+the wearer or tracker mounting. **Start pose check** waits for all selected wrists
+to match continuously for one second before arms, fingers and optional head
+following begin. Stop cancels the wait. See [pose matching](deployment/PICO_POSE_MATCH.md).
+
 ## Native PICO wrist trackers and optical fingers
 
 1. Power both wrist trackers. In XRoboToolkit enable **Head**, **Hand**,
@@ -57,7 +65,8 @@ XRoboToolkit head following and its camera view are separate from this mode.
 3. Press **Connect PICO tracker input**. Verify left/right tracker assignments
    and that both hands are optically tracked. Wuji gloves are not required.
 4. In supported robot mode 4 or 703, press **Prepare arms**. The hands open
-   during preparation. Match the robot arm pose, look forward, then Start.
+   during preparation. Save the reference on first use, then **Start pose check**
+   and hold the matching wrist pose until following begins.
 5. Trackers drive arms and wrists; PICO optical hand tracking drives fingers.
    Stop ends both and returns the arms home. Walking stays under the remote.
 
@@ -73,8 +82,8 @@ This mode is installed; see [deployment](deployment/PICO_OPTICAL_HANDS.md). Phys
    the saved left wrist serial is the tracker mounted on that wrist.
 5. Optional: select **Follow headset** before preparing. Open Remote Vision
    for the head-camera view.
-6. Press **Prepare arms**, wait for Ready, match the prepared arm pose and
-   look forward, then press **Start following**.
+6. Press **Prepare arms**, wait for Ready and save the reference on first use.
+   Press **Start pose check**, look forward and hold the matching wrist pose.
 7. The left wrist tracker drives the left arm/wrist, and the glove drives
    left fingers. The right side holds its starting pose. Stop ends following
    and returns the arms home.
@@ -90,8 +99,8 @@ This mode is installed; see [deployment](deployment/PICO_OPTICAL_HANDS.md). Phys
    Confirm left/right tracker assignments under Wrist tracker assignments.
    Saved serials are left LEFT_TRACKER_SN, right RIGHT_TRACKER_SN.
 5. Select **Follow headset** if desired and open Remote Vision for camera POV.
-6. Press **Prepare arms**. After Ready, look forward and match the robot's
-   prepared arm pose, then press **Start following**.
+6. Press **Prepare arms**. After Ready, save the reference on first use. Press
+   **Start pose check**, look forward and match both wrists until following starts.
 7. Each tracker controls its arm/wrist; each glove controls its fingers.
    Stop ends following and returns the arms home. Walking remains under
    the Unitree remote.
