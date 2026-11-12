@@ -36,3 +36,19 @@ All input modes share one official SDK reader. Packet timestamps drive sampling
 so controller/head input continues when a Motion Tracker timestamp stops.
 The Unitree PR321 arm controller, IK, hand retargeter and existing gains are
 unchanged. Physical following must be checked with the operator after deployment.
+
+## Dashboard SSH reconnects
+
+Install the operator laptop's public key in the robot user's authorized_keys
+and keep its private key on the laptop at ~/.ssh/h2_teleop_ed25519. Generate
+that key only if it does not already exist, then use ssh-copy-id with its
+.pub file and the reachable PC2 address. The dashboard supports H2_SSH_KEY
+for a different private-key path. Test BatchMode key login before relying
+on dashboard reconnects. Without a key file, the older authenticated
+control-socket workflow remains available.
+
+Glove and PICO inputs use separate, compressed, key-authenticated SSH links
+when a key is configured. Reconnecting does not need a password or a living
+management SSH session. This also avoids queuing all input streams behind
+one stalled TCP connection. Radio packet loss can still interrupt inputs;
+key login does not fix the wireless link.
