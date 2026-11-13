@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f6f7">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'none'">
+  <title>Robotics Center · Teleoperation</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='11' fill='%231d343b'/%3E%3Cpath d='M11 28V12h10a5 5 0 0 1 0 10H11m9 0 8 6' fill='none' stroke='white' stroke-width='3'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <aside class="sidebar" aria-label="Workspace navigation">
+    <a class="brand" href="#/" aria-label="Robotics Center home"><span class="brand-mark">rc<span>↗</span></span><span>Robotics Center<small>TELEOPERATION</small></span></a>
+    <div class="workspace-label">WORKSPACE</div>
+    <a href="#/" class="fleet-nav" id="fleet-nav"></a>
+    <div class="sidebar-section"><span>YOUR ROBOTS</span><button class="icon-button" data-action="add" title="Add robot" aria-label="Add robot">+</button></div>
+    <nav id="robot-nav" aria-label="Saved robots"></nav>
+    <button class="add-sidebar" data-action="add">+ <span>Add a robot</span></button>
+    <div class="sidebar-bottom"><span class="workspace-avatar">RC</span><div>Local workspace<small>Robot profiles stay on this computer</small></div></div>
+  </aside>
+  <div class="workspace">
+    <header class="topbar"><div id="breadcrumb"></div><div class="topbar-right"><span class="preview-pill"><span></span> UI preview</span><span class="avatar" aria-label="Local workspace">RC</span></div></header>
+    <div class="preview-banner"><span id="preview-icon"></span><span><strong>Design preview</strong> · Connections and sessions are simulated. Buttons do not send robot commands.</span><button data-action="reset" title="Reset the preview">Reset preview</button></div>
+    <main id="main" tabindex="-1"></main>
+    <footer class="workspace-footer"><span>Robotics Center / Teleoperation workspace</span><span>H2 + new G1 dashboard integration</span></footer>
+  </div>
+  <dialog id="add-dialog" aria-labelledby="add-title"><form id="add-form"><div class="modal-top"><span class="eyebrow">GROW YOUR WORKSPACE</span><button type="button" class="icon-button" data-action="close-dialog" aria-label="Close">×</button></div><h2 id="add-title">Add a robot</h2><p class="muted">Give it a name, choose its model, and save its connection.</p><label>Robot name<input name="name" placeholder="e.g. G1 · Manipulation lab" maxlength="48" required></label><div class="form-grid"><label>Robot model<select name="model" id="new-model"><option value="h2">Unitree H2</option><option value="g1">Unitree G1</option><option value="custom">Other model · adapter needed</option></select></label><label>Connection<select name="transport"><option>Ethernet</option><option>Wi-Fi</option></select></label></div><label>Robot agent / SSH alias<input name="address" placeholder="e.g. h2-lab.local" maxlength="100" required><small>Saved as a preview profile. No connection will be attempted.</small></label><div id="model-help" class="model-help"></div><div class="modal-actions"><button type="button" class="button quiet" data-action="close-dialog">Cancel</button><button class="button primary" type="submit">Add robot <span>↗</span></button></div></form></dialog>
+  <dialog id="detail-dialog" aria-labelledby="detail-title"><div class="modal-top"><span class="eyebrow">DESIGN PREVIEW</span><button class="icon-button" data-action="close-detail" aria-label="Close">×</button></div><h2 id="detail-title"></h2><div id="detail-content"></div><div class="modal-actions"><button class="button primary" data-action="close-detail">Got it</button></div></dialog>
+  <div id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
