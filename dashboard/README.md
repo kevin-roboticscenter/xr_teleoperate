@@ -13,6 +13,9 @@ Stop available while the preview session is active.
 
 ![Robot selection preview](docs/robots.png)
 
+The H2 and G1 cards use official Unitree product images. See the
+[image sources and attribution](preview/assets/SOURCES.md).
+
 ![G1 control preview](docs/g1-control.png)
 
 From the repository root:

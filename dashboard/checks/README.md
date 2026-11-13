@@ -20,7 +20,7 @@ dashboard/.venv-checks/bin/pip install -r dashboard/checks/requirements.txt
 dashboard/.venv-checks/bin/python dashboard/checks/browser_check.py
 ```
 
-The script checks robot selection, independent session state, Prepare/Start/Stop,
+The script checks official image loading, robot selection, independent session state, Prepare/Start/Stop,
 model-specific controls, camera lists, Add robot, and mobile overflow. It also
 checks for browser exceptions and robot API requests. Its disposable preview
 profiles live only in that browser profile. Screenshots and results are written

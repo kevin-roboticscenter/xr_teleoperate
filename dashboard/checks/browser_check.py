@@ -39,7 +39,7 @@ async def main():
                     return result.get('result', {})
 
         async def evaluate(expression):
-            result = await call('Runtime.evaluate', {'expression': expression, 'returnByValue': True})
+            result = await call('Runtime.evaluate', {'expression': expression, 'returnByValue': True, 'awaitPromise': True})
             if 'exceptionDetails' in result:
                 raise RuntimeError(result['exceptionDetails'])
             return result['result'].get('value')
@@ -70,6 +70,8 @@ async def main():
         await asyncio.sleep(.5)
         await click('[data-action="reset"]')
         await expect('Robot picker contains H2 and G1', 'document.querySelectorAll("[data-robot-card]").length === 2')
+        await evaluate('Promise.all(Array.from(document.querySelectorAll(".robot-photo"), image => image.decode()))')
+        await expect('Official H2 and G1 product images load', 'document.querySelectorAll(".robot-photo").length === 2 && Array.from(document.querySelectorAll(".robot-photo")).every(image => image.complete && image.naturalWidth === 428 && image.naturalHeight === 404 && image.alt.includes("Unitree"))')
         await expect('Preview disclosure stays visible', 'document.querySelector(".preview-banner").textContent.includes("No robots are connected")')
         await screenshot('robots.png')
 
