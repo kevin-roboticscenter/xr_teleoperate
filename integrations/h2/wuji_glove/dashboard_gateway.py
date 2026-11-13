@@ -21,7 +21,7 @@ from urllib.parse import urlsplit, parse_qs
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 import h2_link
-from pico_tracker.controllers import CONTROLLER_SOURCE
+from pico_tracker.controllers import CONTROLLER_SOURCE, CONTROLLER_LEFT_SOURCE
 from wuji_glove.calibration import CalibrationManager, CalibrationError
 
 
@@ -243,7 +243,7 @@ def handler(bridge, tracker=None, video=None, calibration=None):
                     if json.loads(body)['source'] in ('vr', 'pico_head', 'pico_tracker_hands'): bridge.close()
                     if callable(getattr(bridge, 'set_dual', None)):
                         bridge.set_dual(json.loads(body)['source'] in ('pico_dual_wuji', CONTROLLER_SOURCE))
-                    if tracker and json.loads(body)['source'] not in ('pico_wuji', 'pico_dual_wuji', CONTROLLER_SOURCE, 'pico_head', 'pico_tracker_hands'): tracker.close()
+                    if tracker and json.loads(body)['source'] not in ('pico_wuji', 'pico_dual_wuji', CONTROLLER_SOURCE, CONTROLLER_LEFT_SOURCE, 'pico_head', 'pico_tracker_hands'): tracker.close()
                 if 300 <= response.status < 400:
                     self.send_response(response.status)
                     self.send_header('Location', response.getheader('Location', '/h2-teleop'))

@@ -3,15 +3,15 @@
 import os
 from pathlib import Path
 import sys
-from pico_tracker.controllers import CONTROLLER_SOURCE
+from pico_tracker.controllers import CONTROLLER_SOURCE, CONTROLLER_LEFT_SOURCE, CONTROLLER_SOURCES
 
 ROOT = Path(__file__).resolve().parent
 UPSTREAM = ROOT / 'upstream/dex5-pr321'
 GAIN_SETTINGS_PATH = ROOT / 'config/dex5_gains.json'
 PICO_HAND_SOURCE = 'pico_tracker_hands'
 DUAL_WUJI_SOURCES = ('pico_dual_wuji', CONTROLLER_SOURCE)
-WUJI_SOURCES = ('wuji', 'pico_wuji', *DUAL_WUJI_SOURCES)
-NATIVE_SOURCES = ('pico_wuji', *DUAL_WUJI_SOURCES, 'pico_head', PICO_HAND_SOURCE)
+WUJI_SOURCES = ('wuji', 'pico_wuji', CONTROLLER_LEFT_SOURCE, *DUAL_WUJI_SOURCES)
+NATIVE_SOURCES = ('pico_wuji', CONTROLLER_LEFT_SOURCE, *DUAL_WUJI_SOURCES, 'pico_head', PICO_HAND_SOURCE)
 DUAL_TRACKER_SOURCES = (*DUAL_WUJI_SOURCES, PICO_HAND_SOURCE)
 sys.path.insert(0, str(UPSTREAM))
 from teleop.utils.dex5_gains import GainStore
@@ -41,11 +41,11 @@ def command(hand_source='vr'):
         raise ValueError('Unknown hand source')
     if hand_source == 'pico_head':
         return [sys.executable, str(ROOT / 'head_camera/head_only.py')]
-    if hand_source in ('pico_wuji', *DUAL_TRACKER_SOURCES):
+    if hand_source in ('pico_wuji', CONTROLLER_LEFT_SOURCE, *DUAL_TRACKER_SOURCES):
         return [sys.executable, str(ROOT / 'pico_tracker/arm_teleop.py'),
                 *(['--both-arms'] if hand_source in DUAL_TRACKER_SOURCES else []),
                 *(['--pico-hands'] if hand_source == PICO_HAND_SOURCE else []),
-                *(['--controllers'] if hand_source == CONTROLLER_SOURCE else [])]
+                *(['--controllers'] if hand_source in CONTROLLER_SOURCES else [])]
     return [sys.executable, str(ROOT / 'head_camera/browser_teleop.py'),
             '--arm', 'H2', *(['--ee', 'dex5'] if hand_source == 'vr' else []), '--input-mode', 'hand',
             '--display-mode', display_mode(), '--motion', '--headless', '--ipc',

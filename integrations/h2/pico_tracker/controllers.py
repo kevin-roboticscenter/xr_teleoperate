@@ -4,6 +4,8 @@ import math
 from .geometry import pose_valid
 
 CONTROLLER_SOURCE = 'pico_controller_wuji'
+CONTROLLER_LEFT_SOURCE = 'pico_controller_wuji_left'
+CONTROLLER_SOURCES = (CONTROLLER_SOURCE, CONTROLLER_LEFT_SOURCE)
 CONTROLLER_IDS = {side: 'pico-controller-'+side for side in ('left', 'right')}
 
 

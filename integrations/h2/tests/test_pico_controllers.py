@@ -8,7 +8,7 @@ import time
 import unittest
 from unittest.mock import Mock, patch
 
-from pico_tracker.controllers import (CONTROLLER_SOURCE, CONTROLLER_IDS,
+from pico_tracker.controllers import (CONTROLLER_SOURCE, CONTROLLER_LEFT_SOURCE, CONTROLLER_IDS,
                                       controller_frame, read_controllers)
 from pico_tracker.input import TrackerInput
 from pico_tracker.pose_match import PoseReference
@@ -29,6 +29,24 @@ def frame():
 
 
 class ControllerInput(unittest.TestCase):
+    def test_left_only_mode_requires_only_left_controller_and_no_right_arm_flag(self):
+        args = command(CONTROLLER_LEFT_SOURCE)
+        self.assertIn('--controllers', args)
+        self.assertNotIn('--both-arms', args)
+        self.assertNotIn('--pico-hands', args)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root/'latest.json'
+            data = frame()
+            del data['controllers']['right']
+            path.write_text(json.dumps(data))
+            inputs = TrackerInput(root, path)
+            self.assertTrue(inputs.status(both=False, controllers=True)['ready'])
+            self.assertFalse(inputs.status(both=True, controllers=True)['ready'])
+            data['controllers']['left']['pose_age_ms'] = 1500
+            path.write_text(json.dumps(data))
+            self.assertFalse(inputs.status(both=False, controllers=True)['ready'])
+
     def test_reads_official_controller_getters_and_keeps_each_pose_age(self):
         sdk = Mock()
         sdk.get_left_controller_pose.return_value = POSE
@@ -93,6 +111,18 @@ class ControllerInput(unittest.TestCase):
 
 
 class ControllerOwnership(unittest.TestCase):
+    def test_left_only_selection_keeps_right_glove_out_of_required_inputs(self):
+        up, _ = controller()
+        up.wuji.set_dual = Mock()
+        up.tracker = Mock()
+        up.tracker.status.return_value = {'ready': True}
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(web, 'HAND_SOURCE_PATH', Path(directory)/'source.json'):
+                self.assertTrue(up.set_hand_source(CONTROLLER_LEFT_SOURCE)[0])
+        up.wuji.set_dual.assert_called_once_with(False)
+        self.assertTrue(up.tracker_status()['ready'])
+        up.tracker.status.assert_called_once_with(both=False, controllers=True)
+
     def test_controller_start_and_stop_keep_gloves_under_existing_dashboard_owner(self):
         up, events = controller(CONTROLLER_SOURCE)
         up.tracker = Mock()

@@ -41,6 +41,7 @@ from quest_h2_teleop import (GAIN_SETTINGS_PATH, ROOT, UPSTREAM, command, enviro
                             PICO_HAND_SOURCE, NATIVE_SOURCES, CONTROLLER_SOURCE,
                             DUAL_WUJI_SOURCES, WUJI_SOURCES)
 from pico_tracker.input import TrackerInput
+from pico_tracker.controllers import CONTROLLER_LEFT_SOURCE, CONTROLLER_SOURCES
 from pico_tracker.pose_match import MatchDwell, matching_enabled
 from head_camera.head_follow import settings as head_settings
 from teleop.utils.dex5_gains import GainProfile, GainStore, MIN_MULTIPLIER, MAX_MULTIPLIER
@@ -360,6 +361,8 @@ class Upstream:
                 return True, 'PICO camera + head-only mode selected; gloves and wrist trackers are not required'
             if value == CONTROLLER_SOURCE:
                 return True, 'Both PICO controllers drive arms/wrists; both Wuji gloves drive fingers'
+            if value == CONTROLLER_LEFT_SOURCE:
+                return True, 'Left PICO controller drives the left arm; left Wuji glove drives fingers; right side holds'
             if value == 'pico_dual_wuji':
                 return True, 'Both PICO wrist trackers + both Wuji gloves selected'
             if value == 'pico_wuji':
@@ -389,8 +392,8 @@ class Upstream:
     def tracker_status(self):
         tracker = getattr(self, 'tracker', None)
         if tracker is None: return None
-        if getattr(self, 'hand_source', 'vr') == CONTROLLER_SOURCE:
-            return tracker.status(both=True, controllers=True)
+        if getattr(self, 'hand_source', 'vr') in CONTROLLER_SOURCES:
+            return tracker.status(both=self.hand_source == CONTROLLER_SOURCE, controllers=True)
         if getattr(self, 'hand_source', 'vr') == PICO_HAND_SOURCE:
             return tracker.status(both=True, optical_hands=True)
         return tracker.status(head_only=True) if getattr(self, 'hand_source', 'vr') == 'pico_head' else tracker.status(both=True) if self.hand_source == 'pico_dual_wuji' else tracker.status()
@@ -762,6 +765,7 @@ PAGE ='''<!doctype html><html lang="en"><meta charset="utf-8">
 <option value="pico_wuji">PICO left wrist tracker + Wuji left hand</option>
 <option value="pico_dual_wuji">PICO wrist trackers + both Wuji gloves</option>
 <option value="pico_controller_wuji">PICO controllers + both Wuji gloves</option>
+<option value="pico_controller_wuji_left">Left PICO controller + left Wuji glove</option>
 <option value="pico_tracker_hands">PICO wrist trackers + PICO fingers</option>
 </select>
 <button id="wuji-connect" onclick="send('wuji/connect')" style="font-size:20px;padding:14px;background:#1e40af" disabled>Connect Wuji glove</button>
@@ -879,10 +883,11 @@ function saveMatchingPose(){
 }
 function renderWuji(s){
   const w=s.wuji||{},b=s.glove_bridge||{};
-  const controllers=s.hand_source==='pico_controller_wuji';
-  const dual=s.hand_source==='pico_dual_wuji'||controllers;
+  const controllerLeft=s.hand_source==='pico_controller_wuji_left';
+  const controllers=s.hand_source==='pico_controller_wuji'||controllerLeft;
+  const dual=s.hand_source==='pico_dual_wuji'||s.hand_source==='pico_controller_wuji';
   const optical=s.hand_source==='pico_tracker_hands';
-  const usesGlove=s.hand_source==='wuji'||s.hand_source==='pico_wuji'||dual;
+  const usesGlove=s.hand_source==='wuji'||s.hand_source==='pico_wuji'||controllerLeft||dual;
   $('#hand-source').value=s.hand_source||'vr';
   $('#hand-source').disabled=busy||s.running||w.active;
   $('#wuji-connect').hidden=!usesGlove;
@@ -896,7 +901,7 @@ function renderWuji(s){
   $('#right-glove-state').textContent=right.active?'Right fingers following · STOP ends the test':!rf.ready?(rf.message||'Waiting for right-hand motor feedback'):right.connected?'Right-hand test READY · press START right-hand test':((b.hands||{}).right||{}).error||'Connect the calibrated right glove';
   $('#wuji-state').textContent=feedback&&!feedback.ready?feedback.message+(w.connected?' · glove input connected':''):w.error?w.error:w.active?'Wuji left fingers following':w.connected?'Wuji left glove connected · START activates fingers':b.error?b.error:usesGlove?'Connect the calibrated left glove':'VR controls both hands';
   if(dual){const hands=w.hands||{};$('#wuji-state').textContent=(b.error||w.error||'')+' '+['left','right'].map(side=>{const h=hands[side]||{},f=h.hand_feedback||{};return side+': '+(!f.ready?(f.message||'waiting for motor feedback'):!h.connected?'connect calibrated glove':h.active?'following':'ready')}).join(' · ')}
-  const headOnly=s.hand_source==='pico_head',native=headOnly||s.hand_source==='pico_wuji'||dual||optical,t=s.pico_tracker||{},p=s.tracker_bridge||{};
+  const headOnly=s.hand_source==='pico_head',native=headOnly||s.hand_source==='pico_wuji'||controllers||dual||optical,t=s.pico_tracker||{},p=s.tracker_bridge||{};
   if(optical){const hands=(t.hands||{}).sides||{};$('#wuji-state').textContent='PICO fingers · '+['left','right'].map(side=>side+': '+(hands[side]?'tracked':'show hand to headset')).join(' · ')}
   $('#tracker-connect').textContent=headOnly?'Connect PICO headset':controllers?'Connect PICO controller input':'Connect PICO tracker input';
   $('#wuji-state').hidden=headOnly;$('#tracker-assignments').hidden=headOnly||controllers;$('#tracker-setup-help').hidden=headOnly;

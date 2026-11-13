@@ -32,8 +32,8 @@ def main():
     parser.add_argument('--pico-hands', action='store_true')
     parser.add_argument('--controllers', action='store_true')
     args = parser.parse_args()
-    if args.controllers and (not args.both_arms or args.pico_hands):
-        parser.error('Controller input requires --both-arms and dashboard-owned Wuji fingers')
+    if args.controllers and args.pico_hands:
+        parser.error('Controller input requires dashboard-owned Wuji fingers')
     # Importing this module for tests never initializes DDS or a motor controller.
     sys.path[:0] = environment()['PYTHONPATH'].split(os.pathsep)
     os.chdir(UPSTREAM / 'teleop')

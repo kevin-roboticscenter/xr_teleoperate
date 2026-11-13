@@ -76,7 +76,8 @@ class TrackerInput:
         message = ('PICO controller input disconnected' if controllers and not frame else
                    f'Enable Controller + Send in XRoboToolkit and turn on the {missing[0]} controller' if controllers and missing else
                    f'Move the {stale[0]} controller to verify its pose is updating' if controllers and stale and head_ready else
-                   'Both PICO controllers ready; START captures neutral' if controllers and ready else
+                   ('Both PICO controllers ready; START captures neutral' if both else
+                    'Left PICO controller ready; START captures neutral') if controllers and ready else
                    'Tracker input disconnected' if not frame else
                    'Use a different tracker serial for each wrist' if duplicate else
                    f'Choose the {missing[0]} wrist tracker' if missing else
