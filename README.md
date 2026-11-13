@@ -1,3 +1,13 @@
+## Shared H2 + G1 dashboard preview
+
+This branch includes the [multi-robot UI preview](dashboard/README.md), plus the
+existing H2 and newly imported G1 integrations. Run `python3 dashboard/serve.py`
+and open http://127.0.0.1:8790/ to review it. Preview actions use simulated data.
+
+![Robot selection preview](dashboard/docs/robots.png)
+
+---
+
 > H2 operators: see [PICO/Wuji dashboard, head camera and setup](integrations/h2/README.md).
 
 <div align="center">

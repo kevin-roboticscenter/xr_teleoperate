@@ -6,6 +6,15 @@ static preview. The preview does not import either controller, contact an
 agent, open an SDK or send robot commands. Its page policy blocks fetch and
 WebSocket connections.
 
+The layout uses system fonts, a quiet sidebar, larger rounded cards and a single
+blue accent. Robot selection leads to four clear pages: Control, Cameras,
+Recordings and Settings. The session flow is Connect → Prepare → Start, with
+Stop available while the preview session is active.
+
+![Robot selection preview](docs/robots.png)
+
+![G1 control preview](docs/g1-control.png)
+
 From the repository root:
 
 ```bash
@@ -40,3 +49,6 @@ The shared preview does not replace their live dashboards.
 Only preview profiles/settings are stored in browser localStorage. Personal
 models, machine configuration, SDKs, robot logs and recordings remain outside
 this UI source.
+
+See [browser checks](checks/README.md) for the isolated preview checks and
+screenshot capture. These checks establish UI behavior, not hardware readiness.
